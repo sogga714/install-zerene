@@ -375,20 +375,22 @@ sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 # openrc beta - add artix repos and swap init system before anything else
 if [[ "$INSTALL_OPENRC" == "true" ]]; then
-    # write the artix mirrorlist first so pacman can reach the repos
-    # without this the artix-keyring package download will fail
+    # write the artix mirrorlist so pacman can reach the repos
+    # curl grabs the live list, printf is the offline fallback
     mkdir -p /etc/pacman.d
-    curl -s https://gitea.artixlinux.org/packages/artix-mirrorlist/raw/branch/master/mirrorlist \
-        -o /etc/pacman.d/artix-mirrorlist || \
-    cat > /etc/pacman.d/artix-mirrorlist <<'ARTIXMIRROR'
-Server = https://mirrors.dotsrc.org/artix-linux/repos/$repo/os/$arch
-Server = https://mirror.clarkson.edu/artix-linux/repos/$repo/os/$arch
-Server = https://ftp.ntua.gr/pub/linux/artix-linux/$repo/os/$arch
-ARTIXMIRROR
+    if ! curl -sf https://gitea.artixlinux.org/packages/artix-mirrorlist/raw/branch/master/mirrorlist \
+            -o /etc/pacman.d/artix-mirrorlist; then
+        printf 'Server = https://mirrors.dotsrc.org/artix-linux/repos/$repo/os/$arch\nServer = https://mirror.clarkson.edu/artix-linux/repos/$repo/os/$arch\nServer = https://ftp.ntua.gr/pub/linux/artix-linux/$repo/os/$arch\n' \
+            > /etc/pacman.d/artix-mirrorlist
+    fi
 
-    # inject artix repos into pacman.conf above the arch ones
-    # artix repos must come first or arch packages will shadow artix ones
-    sed -i '/\[core\]/i [system]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[world]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[galaxy]\nInclude = /etc/pacman.d/artix-mirrorlist\n' /etc/pacman.conf
+    # inject artix repos above the arch ones so artix packages take precedence
+    # anchoring on [core] is unreliable - append before the first [core] or at top
+    if grep -q '^\[core\]' /etc/pacman.conf; then
+        sed -i '/^\[core\]/i [system]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[world]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[galaxy]\nInclude = /etc/pacman.d/artix-mirrorlist\n' /etc/pacman.conf
+    else
+        printf '\n[system]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[world]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[galaxy]\nInclude = /etc/pacman.d/artix-mirrorlist\n' >> /etc/pacman.conf
+    fi
 
     # temporarily allow unsigned packages so we can bootstrap the keyring
     # artix-keyring itself cannot be verified before the keyring is installed
@@ -396,14 +398,14 @@ ARTIXMIRROR
 
     pacman -Sy --noconfirm artix-keyring artix-mirrorlist
 
-    # re-enable signature checking now that the keyring package is on disk
-    sed -i 's/^SigLevel.*/SigLevel = Required DatabaseOptional/' /etc/pacman.conf
-
-    # init the pacman keyring, populate artix keys, then locally sign
-    # the artix master key so pacman fully trusts packages it signed
+    # init the keyring before re-enabling siglevel or the first signed install fails
     pacman-key --init
     pacman-key --populate artix
+    # locally sign the artix master key so pacman fully trusts packages it signed
     pacman-key --lsign-key 95AEC5D0C1E294FC9F82B253573A673A53C01BC2
+
+    # re-enable signature checking now that the keyring is initialized
+    sed -i 's/^SigLevel.*/SigLevel = Required DatabaseOptional/' /etc/pacman.conf
 
     pacman -Sy --noconfirm openrc openrc-base elogind elogind-openrc
 fi
@@ -591,19 +593,19 @@ if [[ "$INSTALL_OPENRC" == "true" ]]; then
     rc-update add dbus default
 fi
 
-# aur helper
+# aur helper - helper name is resolved by the outer shell before chroot runs
+# so AUR_HELPER is a plain string inside the heredoc, not a variable reference
+AUR_HELPER="$([[ "$aur_helper" == "1" ]] && echo "yay" || echo "paru")"
 case $aur_helper in
     1|2)
-        helper=\$([[ "$aur_helper" == "1" ]] && echo "yay" || echo "paru")
         # makepkg refuses to run as root, so we drop to the user we created
         # HOME must be set correctly or gpg and go/rust caches will break
-        # --skippgpcheck is needed because fresh keyrings may not have the
-        # aur maintainer key yet - user can verify manually after install
+        # --skippgpcheck is safe here - user can re-verify keys after install
         (
             cd /tmp
-            git clone "https://aur.archlinux.org/\${helper}.git"
-            chown -R "$username:$username" "\${helper}"
-            cd "\${helper}"
+            git clone "https://aur.archlinux.org/${AUR_HELPER}.git"
+            chown -R "$username:$username" "${AUR_HELPER}"
+            cd "${AUR_HELPER}"
             sudo -u "$username" HOME="/home/$username" \
                 makepkg -si --noconfirm --skippgpcheck
         )
@@ -708,4 +710,12 @@ umount -R /mnt 2>/dev/null || true
 msg "zerene os installed!"
 echo
 echo "tuning info saved to /etc/zerene-tune.txt"
-echo "you can reboot now"
+echo
+
+# ask before rebooting so the user can check output first
+read -rp "reboot now? [Y/n]: " reboot_yn
+if [[ ! "$reboot_yn" =~ ^[Nn]$ ]]; then
+    reboot
+else
+    echo "you can reboot manually when ready"
+fi
