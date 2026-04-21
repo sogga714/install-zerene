@@ -2,9 +2,50 @@
 
 # zerene os installer - xenovia 1
 
+# --------------------------------------------------------
+# error logging - every failed command is caught here
+# logs timestamp, line number, and the command that failed
+# log lives next to the script so its easy to find after install
+# --------------------------------------------------------
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ERROR_LOG="$SCRIPT_DIR/error.log"
+
+# write a header at the start of each run so multiple runs
+# dont blend together and you can tell when each one happened
+{
+    echo "========================================"
+    echo "zerene installer run: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "========================================"
+} >> "$ERROR_LOG"
+
+# log_error is called by the trap and the err() function
+# writes timestamp, line number, exit code, and command to the log
+# also prints to terminal in red so nothing fails silently
+log_error() {
+    local exit_code=$1
+    local line=$2
+    local cmd=$3
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "\e[1;31mERROR at line $line (exit $exit_code): $cmd\e[0m" >&2
+    echo "[$timestamp] line $line | exit $exit_code | $cmd" >> "$ERROR_LOG"
+}
+
+# trap ERR fires on every command that returns a non-zero exit code
+# BASH_LINENO[0] is the line number, BASH_COMMAND is the full command string
+trap 'log_error $? ${BASH_LINENO[0]} "$BASH_COMMAND"' ERR
+
 msg() { echo -e "\e[1;34m>>> $1\e[0m"; }
 warn() { echo -e "\e[1;33m!!! $1\e[0m"; }
-err() { echo -e "\e[1;31mERROR: $1\e[0m"; exit 1; }
+# err() logs the message then exits - for fatal errors with a custom message
+err() {
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo -e "\e[1;31mERROR: $1\e[0m" >&2
+    echo "[$timestamp] fatal: $1" >> "$ERROR_LOG"
+    exit 1
+}
 
 clear
 fastfetch
@@ -710,6 +751,19 @@ umount -R /mnt 2>/dev/null || true
 msg "zerene os installed!"
 echo
 echo "tuning info saved to /etc/zerene-tune.txt"
+echo
+
+# show a summary of any errors that were logged during install
+# if the log has entries beyond the header, print them so nothing is missed
+ERROR_COUNT=$(grep -c '^\[' "$ERROR_LOG" 2>/dev/null || echo 0)
+if [[ "$ERROR_COUNT" -gt 0 ]]; then
+    warn "$ERROR_COUNT error(s) were logged during install - check $ERROR_LOG"
+    echo
+    tail -n "$ERROR_COUNT" "$ERROR_LOG"
+    echo
+else
+    msg "no errors logged"
+fi
 echo
 
 # ask before rebooting so the user can check output first
