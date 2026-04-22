@@ -2,97 +2,41 @@
 
 # zerene os installer - xenovia 1
 
-# --------------------------------------------------------
-# error logging - every failed command is caught here
-# logs timestamp, line number, and the command that failed
-# log lives next to the script so its easy to find after install
-# --------------------------------------------------------
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ERROR_LOG="$SCRIPT_DIR/error.log"
-
-# write a header at the start of each run so multiple runs
-# dont blend together and you can tell when each one happened
-{
-    echo "========================================"
-    echo "zerene installer run: $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "========================================"
-} >> "$ERROR_LOG"
-
-# log_error is called by the trap and the err() function
-# writes timestamp, line number, exit code, and command to the log
-# also prints to terminal in red so nothing fails silently
-log_error() {
-    local exit_code=$1
-    local line=$2
-    local cmd=$3
-    local timestamp
-    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "\e[1;31mERROR at line $line (exit $exit_code): $cmd\e[0m" >&2
-    echo "[$timestamp] line $line | exit $exit_code | $cmd" >> "$ERROR_LOG"
-}
-
-# trap ERR fires on every command that returns a non-zero exit code
-# BASH_LINENO[0] is the line number, BASH_COMMAND is the full command string
-trap 'log_error $? ${BASH_LINENO[0]} "$BASH_COMMAND"' ERR
-
-msg() { echo -e "\e[1;34m>>> $1\e[0m"; }
+msg()  { echo -e "\e[1;34m>>> $1\e[0m"; }
 warn() { echo -e "\e[1;33m!!! $1\e[0m"; }
-# err() logs the message then exits - for fatal errors with a custom message
-err() {
-    local timestamp
-    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo -e "\e[1;31mERROR: $1\e[0m" >&2
-    echo "[$timestamp] fatal: $1" >> "$ERROR_LOG"
-    exit 1
-}
+err()  { echo -e "\e[1;31mERROR: $1\e[0m"; exit 1; }
 
 clear
 fastfetch
 echo "| -- zerene os installer -- |"
 echo
 
-# check internet
+# check internet first
 msg "checking internet connection..."
 if ! ping -c 1 google.com &>/dev/null; then
     msg "no internet detected, opening nmtui..."
     nmtui
 fi
 
-# user setup
+# --------------------------------------------------------
+# all questions up front before anything gets installed
+# --------------------------------------------------------
+
+# user
 read -rp "hostname: " hostname
 read -rp "username: " username
 read -rsp "password: " password
 echo
 
-# show disks and pick one
+# disk
 msg "available disks:"
 lsblk -dno NAME,SIZE,MODEL | grep -v "loop"
 echo
 read -rp "disk to install on (e.g. sda or nvme0n1): " DISK_ID
 TARGET_DISK="/dev/$DISK_ID"
-
-# nvme drives need a p before the partition number, sata dont
 [[ $TARGET_DISK == *"nvme"* ]] && P="p" || P=""
 
-swapoff -a
-
-read -rp "format $TARGET_DISK? [y/N]: " yn
-if [[ "$yn" =~ ^[Yy]$ ]]; then
-    msg "partitioning $TARGET_DISK..."
-    parted -s "$TARGET_DISK" mklabel gpt
-    parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 513MiB
-    parted -s "$TARGET_DISK" set 1 esp on
-    parted -s "$TARGET_DISK" mkpart primary ext4 513MiB 100%
-    mkfs.fat -F32 "${TARGET_DISK}${P}1"
-    mkfs.ext4 "${TARGET_DISK}${P}2"
-fi
-
-# mount the partitions
-msg "mounting..."
-mount "${TARGET_DISK}${P}2" /mnt
-mkdir -p /mnt/boot/efi
-mount "${TARGET_DISK}${P}1" /mnt/boot/efi
+read -rp "format $TARGET_DISK? this will wipe it [y/N]: " FORMAT_DISK
 
 # nix
 echo
@@ -101,20 +45,9 @@ echo "1) yes"
 echo "2) no"
 echo
 read -rp "nix: " nix_choice
-INSTALL_NIX=false
-if [[ "$nix_choice" == "1" ]]; then
-    INSTALL_NIX=true
-    mkdir -p /mnt/nix/{store,var/nix/db,var/nix/profiles,var/nix/channel-cache}
-    chmod -R 1775 /mnt/nix/store
-    mkdir -p /mnt/var/empty
-fi
 
-# --------------------------------------------------------
-# hardware scan - runs here so we can use results in kernel menu
-# --------------------------------------------------------
-
+# hardware scan - do this before kernel menu so we can show detected hardware
 msg "scanning hardware..."
-
 CPU_VENDOR=$(grep -m1 "vendor_id" /proc/cpuinfo | awk '{print $3}')
 CPU_MODEL_NAME=$(grep -m1 "model name" /proc/cpuinfo | cut -d: -f2 | xargs)
 CPU_CORES=$(nproc)
@@ -122,25 +55,18 @@ CPU_FAMILY=$(grep -m1 "cpu family" /proc/cpuinfo | awk '{print $4}')
 CPU_MODEL=$(grep -m1 "^model[[:space:]]" /proc/cpuinfo | awk '{print $3}')
 RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
 IS_LAPTOP=false
-DISK_TYPE="hdd"
 IS_VM=false
+DISK_TYPE="hdd"
 
-# battery check for laptop
 [ -d /sys/class/power_supply/BAT0 ] || [ -d /sys/class/power_supply/BAT1 ] && IS_LAPTOP=true
+grep -qi "virtualbox\|vmware\|kvm\|qemu\|hyper-v" /sys/class/dmi/id/product_name 2>/dev/null && IS_VM=true
 
-# vm detection - check dmi info
-if grep -qi "virtualbox\|vmware\|kvm\|qemu\|hyper-v" /sys/class/dmi/id/product_name 2>/dev/null; then
-    IS_VM=true
-fi
-
-# disk type
 if [[ "$TARGET_DISK" == *"nvme"* ]]; then
     DISK_TYPE="nvme"
 elif [[ "$(cat /sys/block/$(basename $TARGET_DISK)/queue/rotational 2>/dev/null)" == "0" ]]; then
     DISK_TYPE="ssd"
 fi
 
-# intel gen detection
 CPU_GEN=0
 if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
     CPU_GEN=$(grep -m1 "model name" /proc/cpuinfo | grep -oP "\d+(?:st|nd|rd|th) Gen" | grep -oP "^\d+" || echo 0)
@@ -150,27 +76,25 @@ echo
 msg "detected: $CPU_MODEL_NAME | ${CPU_CORES} cores | ${RAM_MB}mb ram | disk: $DISK_TYPE | laptop: $IS_LAPTOP | vm: $IS_VM"
 echo
 
-# --------------------------------------------------------
-# kernel selection - auto-tune is right in here as an option
-# --------------------------------------------------------
-
+# kernel
 echo "kernel:"
 echo "1) linux          - stable default arch kernel"
 echo "2) linux-zen      - better for gaming and desktop, lower latency"
 echo "3) linux-hardened - security focused"
-echo "4) auto-tune      - picks the best kernel AND tunes it for your hardware"
-echo "5) advanced       - configure the kernel yourself (menuconfig / vim / nano)"
+echo "4) auto-tune      - picks best kernel and tunes it for your hardware"
+echo "5) advanced       - configure it yourself (menuconfig / vim / nano)"
 echo
 read -rp "kernel: " kernel_choice
 
 KERNEL_PKG="linux"
+KERNEL_HEADERS="linux-headers"
 ADVANCED_KERNEL=false
 AUTO_TUNE=false
 KERN_PARAMS=""
 SWAPPINESS=10
 RAM_HALF=$(( RAM_MB / 2 ))
 
-# io scheduler rule based on disk - set here so auto-tune and manual both use it
+# io scheduler rule based on disk type
 if [[ "$DISK_TYPE" == "nvme" ]]; then
     IO_SCHED_RULE='ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/scheduler}="none"'
 elif [[ "$DISK_TYPE" == "ssd" ]]; then
@@ -180,66 +104,69 @@ else
 fi
 
 case "$kernel_choice" in
-    1) KERNEL_PKG="linux" ;;
-    2) KERNEL_PKG="linux-zen" ;;
-    3) KERNEL_PKG="linux-hardened" ;;
-
+    1)
+        KERNEL_PKG="linux"
+        KERNEL_HEADERS="linux-headers"
+        ;;
+    2)
+        KERNEL_PKG="linux-zen"
+        KERNEL_HEADERS="linux-zen-headers"
+        ;;
+    3)
+        KERNEL_PKG="linux-hardened"
+        KERNEL_HEADERS="linux-hardened-headers"
+        ;;
     4)
         AUTO_TUNE=true
-
-        # pick the best kernel for the hardware
-        # zen is better for amd desktop, hardened adds overhead, vanilla is safest default
+        # pick kernel based on hardware
         if [[ "$IS_VM" == "true" ]]; then
             KERNEL_PKG="linux"
+            KERNEL_HEADERS="linux-headers"
             msg "vm detected, using vanilla kernel"
         elif [[ "$CPU_VENDOR" == "AuthenticAMD" ]] && [[ "$IS_LAPTOP" == "false" ]]; then
             KERNEL_PKG="linux-zen"
+            KERNEL_HEADERS="linux-zen-headers"
             msg "amd desktop detected, picking linux-zen"
         elif [[ "$IS_LAPTOP" == "true" ]]; then
             KERNEL_PKG="linux"
+            KERNEL_HEADERS="linux-headers"
             msg "laptop detected, picking vanilla kernel (better battery)"
         else
             KERNEL_PKG="linux"
+            KERNEL_HEADERS="linux-headers"
             msg "intel desktop, picking vanilla kernel"
         fi
 
-        # amd cpu tuning
+        # amd tuning
         if [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
-            # zen2 = family 23 model 49+, zen3/4 = family 25+
             if [[ "$CPU_FAMILY" -ge 25 ]] || { [[ "$CPU_FAMILY" -eq 23 ]] && [[ "$CPU_MODEL" -ge 49 ]]; }; then
                 KERN_PARAMS="$KERN_PARAMS amd_pstate=active"
                 msg "zen2+ detected, enabling amd_pstate=active"
             fi
             KERN_PARAMS="$KERN_PARAMS processor.max_cstate=5"
-            # amd is less affected by spectre so we can dial back mitigations for perf
             if [[ "$IS_VM" == "false" ]]; then
                 KERN_PARAMS="$KERN_PARAMS spec_store_bypass_disable=prctl spectre_v2=off"
             fi
         fi
 
-        # intel cpu tuning
-        if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
-            if [[ "$CPU_GEN" -ge 6 ]]; then
-                KERN_PARAMS="$KERN_PARAMS intel_pstate=active"
-                msg "intel gen $CPU_GEN detected, enabling intel_pstate=active"
-            fi
+        # intel tuning
+        if [[ "$CPU_VENDOR" == "GenuineIntel" ]] && [[ "$CPU_GEN" -ge 6 ]]; then
+            KERN_PARAMS="$KERN_PARAMS intel_pstate=active"
+            msg "intel gen $CPU_GEN, enabling intel_pstate=active"
         fi
 
-        # laptop power saving params
+        # laptop power saving
         if [[ "$IS_LAPTOP" == "true" ]]; then
             KERN_PARAMS="$KERN_PARAMS pcie_aspm=force nmi_watchdog=0"
-            msg "laptop mode, adding power saving params"
         fi
 
-        # swappiness tuned to ram
         [[ "$RAM_MB" -lt 4096 ]] && SWAPPINESS=30 || SWAPPINESS=10
-        msg "swappiness set to $SWAPPINESS based on ${RAM_MB}mb ram"
-        msg "auto-tune kernel params: $KERN_PARAMS"
+        msg "kernel: $KERNEL_PKG | headers: $KERNEL_HEADERS | params:$KERN_PARAMS"
         ;;
-
     5)
         ADVANCED_KERNEL=true
         KERNEL_PKG="linux"
+        KERNEL_HEADERS="linux-headers"
         echo
         echo "config method:"
         echo "1) menuconfig"
@@ -251,7 +178,7 @@ case "$kernel_choice" in
         ;;
 esac
 
-# rest of the config questions
+# keyboard layout
 echo
 echo "keyboard layout:"
 echo "1) qwerty (us)"
@@ -260,6 +187,7 @@ echo
 read -rp "layout: " kbd_choice
 LAYOUT=$([[ "$kbd_choice" == "2" ]] && echo "fr" || echo "us")
 
+# audio
 echo
 echo "audio:"
 echo "1) pipewire"
@@ -267,6 +195,7 @@ echo "2) pulseaudio"
 echo
 read -rp "audio: " audio_choice
 
+# desktop
 echo
 echo "desktop:"
 echo "1) hyprland"
@@ -276,6 +205,7 @@ echo "4) none"
 echo
 read -rp "desktop: " desktop_choice
 
+# aur helper
 echo
 echo "aur helper:"
 echo "1) yay"
@@ -284,6 +214,7 @@ echo "3) none"
 echo
 read -rp "aur helper: " aur_helper
 
+# gpu
 echo
 echo "gpu driver:"
 echo "1) nvidia modern  - turing/rtx 20xx, gtx 1650 and newer"
@@ -294,6 +225,7 @@ echo "5) vm / none"
 echo
 read -rp "gpu: " gpu_choice
 
+# network
 echo
 echo "network manager:"
 echo "1) networkmanager - full featured, has nmtui"
@@ -301,35 +233,66 @@ echo "2) iwd            - lightweight, fast, wpa3 (wifi only)"
 echo
 read -rp "network: " net_choice
 
-# beta section
-echo
-echo "--- beta features ---"
-echo "1) openrc  [BETA] - replace systemd with openrc (artix repos)"
-echo "2) skip"
-echo
-read -rp "beta: " beta_choice
-INSTALL_OPENRC=false
-[[ "$beta_choice" == "1" ]] && INSTALL_OPENRC=true
-
-if [[ "$INSTALL_OPENRC" == "true" ]]; then
-    warn "openrc is beta - some things might not work perfectly"
-    warn "artix repos will be added to get the openrc packages"
-    echo
-    read -rp "are you sure? [y/N]: " openrc_confirm
-    [[ ! "$openrc_confirm" =~ ^[Yy]$ ]] && INSTALL_OPENRC=false
-fi
-
 NET_PKG="networkmanager"
 [[ "$net_choice" == "2" ]] && NET_PKG="iwd dhcpcd"
 
 # --------------------------------------------------------
-# base install
+# summary before we do anything destructive
 # --------------------------------------------------------
 
-msg "installing base system..."
-pacstrap /mnt base "$KERNEL_PKG" linux-firmware sudo fastfetch plymouth $NET_PKG base-devel dosfstools
+echo
+echo "========================================"
+echo " install summary"
+echo "========================================"
+echo " hostname:  $hostname"
+echo " username:  $username"
+echo " disk:      $TARGET_DISK"
+echo " kernel:    $KERNEL_PKG ($KERNEL_HEADERS)"
+echo " auto-tune: $AUTO_TUNE"
+echo " layout:    $LAYOUT"
+echo " audio:     $audio_choice"
+echo " desktop:   $desktop_choice"
+echo " gpu:       $gpu_choice"
+echo " network:   $net_choice"
+echo " nix:       $nix_choice"
+echo "========================================"
+echo
+read -rp "looks good? start install [y/N]: " confirm
+[[ ! "$confirm" =~ ^[Yy]$ ]] && err "install cancelled"
 
-# advanced kernel build environment
+# --------------------------------------------------------
+# now we actually start doing stuff
+# --------------------------------------------------------
+
+swapoff -a
+
+if [[ "$FORMAT_DISK" =~ ^[Yy]$ ]]; then
+    msg "partitioning $TARGET_DISK..."
+    parted -s "$TARGET_DISK" mklabel gpt
+    parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 513MiB
+    parted -s "$TARGET_DISK" set 1 esp on
+    parted -s "$TARGET_DISK" mkpart primary ext4 513MiB 100%
+    mkfs.fat -F32 "${TARGET_DISK}${P}1"
+    mkfs.ext4 "${TARGET_DISK}${P}2"
+fi
+
+msg "mounting..."
+mount "${TARGET_DISK}${P}2" /mnt
+mkdir -p /mnt/boot/efi
+mount "${TARGET_DISK}${P}1" /mnt/boot/efi
+
+INSTALL_NIX=false
+if [[ "$nix_choice" == "1" ]]; then
+    INSTALL_NIX=true
+    mkdir -p /mnt/nix/{store,var/nix/db,var/nix/profiles,var/nix/channel-cache}
+    chmod -R 1775 /mnt/nix/store
+    mkdir -p /mnt/var/empty
+fi
+
+msg "installing base system..."
+pacstrap /mnt base "$KERNEL_PKG" "$KERNEL_HEADERS" linux-firmware sudo fastfetch plymouth $NET_PKG base-devel dosfstools
+
+# advanced kernel build
 if [[ "$ADVANCED_KERNEL" == "true" ]]; then
     msg "setting up kernel build environment..."
     arch-chroot /mnt bash <<KCONF
@@ -365,14 +328,13 @@ mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
 
 # --------------------------------------------------------
-# chroot
+# chroot - everything from here runs inside the new install
 # --------------------------------------------------------
 
 msg "entering chroot..."
 
 arch-chroot /mnt bash <<EOF
 
-# hostname and keymap
 echo "$hostname" > /etc/hostname
 echo "KEYMAP=$LAYOUT" > /etc/vconsole.conf
 
@@ -395,7 +357,7 @@ LOGO=zerene
 OS
 echo "GRUB_DISTRIBUTOR=\"Zerene OS\"" >> /etc/default/grub
 
-# users
+# users and groups
 groupadd -r -g 970 nixbld 2>/dev/null || true
 groupadd -r nix-users 2>/dev/null || true
 for n in \$(seq -w 01 10); do
@@ -414,44 +376,7 @@ if ! grep -q "^%wheel" /etc/sudoers; then
 fi
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-# openrc beta - add artix repos and swap init system before anything else
-if [[ "$INSTALL_OPENRC" == "true" ]]; then
-    # write the artix mirrorlist so pacman can reach the repos
-    # curl grabs the live list, printf is the offline fallback
-    mkdir -p /etc/pacman.d
-    if ! curl -sf https://gitea.artixlinux.org/packages/artix-mirrorlist/raw/branch/master/mirrorlist \
-            -o /etc/pacman.d/artix-mirrorlist; then
-        printf 'Server = https://mirrors.dotsrc.org/artix-linux/repos/$repo/os/$arch\nServer = https://mirror.clarkson.edu/artix-linux/repos/$repo/os/$arch\nServer = https://ftp.ntua.gr/pub/linux/artix-linux/$repo/os/$arch\n' \
-            > /etc/pacman.d/artix-mirrorlist
-    fi
-
-    # inject artix repos above the arch ones so artix packages take precedence
-    # anchoring on [core] is unreliable - append before the first [core] or at top
-    if grep -q '^\[core\]' /etc/pacman.conf; then
-        sed -i '/^\[core\]/i [system]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[world]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[galaxy]\nInclude = /etc/pacman.d/artix-mirrorlist\n' /etc/pacman.conf
-    else
-        printf '\n[system]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[world]\nInclude = /etc/pacman.d/artix-mirrorlist\n\n[galaxy]\nInclude = /etc/pacman.d/artix-mirrorlist\n' >> /etc/pacman.conf
-    fi
-
-    # temporarily allow unsigned packages so we can bootstrap the keyring
-    # artix-keyring itself cannot be verified before the keyring is installed
-    sed -i 's/^SigLevel.*/SigLevel = Never/' /etc/pacman.conf
-
-    pacman -Sy --noconfirm artix-keyring artix-mirrorlist
-
-    # init the keyring before re-enabling siglevel or the first signed install fails
-    pacman-key --init
-    pacman-key --populate artix
-    # locally sign the artix master key so pacman fully trusts packages it signed
-    pacman-key --lsign-key 95AEC5D0C1E294FC9F82B253573A673A53C01BC2
-
-    # re-enable signature checking now that the keyring is initialized
-    sed -i 's/^SigLevel.*/SigLevel = Required DatabaseOptional/' /etc/pacman.conf
-
-    pacman -Sy --noconfirm openrc openrc-base elogind elogind-openrc
-fi
-
-# nix (optional)
+# nix
 if [[ "$INSTALL_NIX" == "true" ]]; then
     pacman -S --noconfirm nix
     mkdir -p /nix/{store,var/nix/db,var/nix/profiles,var/nix/channel-cache}
@@ -465,11 +390,7 @@ experimental-features = nix-command flakes
 max-jobs = auto
 build-users-group = nixbld
 NIX
-    if [[ "$INSTALL_OPENRC" == "true" ]]; then
-        rc-update add nix-daemon default
-    else
-        systemctl enable nix-daemon
-    fi
+    systemctl enable nix-daemon
     cat >> /etc/profile <<NIXRC
 if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
   source '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
@@ -498,22 +419,24 @@ else
 fi
 
 # gpu drivers
-HEADERS="${KERNEL_PKG}-headers"
+# headers are already installed via pacstrap, dkms needs them to build modules
 case "$gpu_choice" in
     1)
         # nvidia modern - turing+ use nvidia-open-dkms since driver 590
-        # also installing linux-headers so dkms can actually build the module
-        pacman -S --noconfirm "\$HEADERS" nvidia-open-dkms nvidia-utils lib32-nvidia-utils \
+        pacman -S --noconfirm nvidia-open-dkms nvidia-utils lib32-nvidia-utils \
             nvidia-settings libglvnd lib32-libglvnd opencl-nvidia
 
-        # nvidia modules must be in initramfs or you get a black screen on wayland
+        # nvidia modules must be in initramfs or wayland gets a black screen
         sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
 
-        # remove kms from hooks - conflicts with nvidia early loading
+        # kms hook conflicts with nvidia early loading, remove it
         sed -i 's/ kms//' /etc/mkinitcpio.conf
 
-        # pacman hook to rebuild initramfs whenever nvidia updates
-        # without this you can end up with a broken initramfs after updates
+        # blacklist nouveau so it doesnt load before nvidia
+        echo "blacklist nouveau" > /etc/modprobe.d/blacklist-nouveau.conf
+        echo "options nouveau modeset=0" >> /etc/modprobe.d/blacklist-nouveau.conf
+
+        # hook to auto rebuild initramfs when nvidia updates
         mkdir -p /etc/pacman.d/hooks
         cat > /etc/pacman.d/hooks/nvidia.hook <<NVHOOK
 [Trigger]
@@ -528,22 +451,16 @@ Description=Updating initramfs after nvidia update...
 When=PostTransaction
 Exec=/usr/bin/mkinitcpio -P
 NVHOOK
-
-        # blacklist nouveau so it doesnt fight with the nvidia driver
-        echo "blacklist nouveau" > /etc/modprobe.d/blacklist-nouveau.conf
-        echo "options nouveau modeset=0" >> /etc/modprobe.d/blacklist-nouveau.conf
         ;;
     2)
-        # nvidia legacy - pascal and older, aur only now since driver 590 dropped them
-        pacman -S --noconfirm "\$HEADERS" git base-devel
+        # nvidia legacy - pascal and older, aur only since driver 590 dropped them
+        pacman -S --noconfirm git base-devel
         (
             cd /tmp
             git clone https://aur.archlinux.org/nvidia-580xx-dkms.git
             chown -R "$username:$username" nvidia-580xx-dkms
             cd nvidia-580xx-dkms
-            # drop to user - makepkg refuses root, HOME needed for caches
-            sudo -u "$username" HOME="/home/$username" \
-                makepkg -si --noconfirm --skippgpcheck
+            sudo -u "$username" makepkg -si --noconfirm
         )
         pacman -S --noconfirm nvidia-utils lib32-nvidia-utils libglvnd lib32-libglvnd
         sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
@@ -552,7 +469,7 @@ NVHOOK
         echo "options nouveau modeset=0" >> /etc/modprobe.d/blacklist-nouveau.conf
         ;;
     3)
-        # amd - mesa handles everything, vulkan-radeon for vulkan
+        # amd - mesa handles everything, vulkan-radeon for vulkan support
         pacman -S --noconfirm mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon \
             xf86-video-amdgpu libva-mesa-driver lib32-libva-mesa-driver \
             vulkan-icd-loader lib32-vulkan-icd-loader
@@ -570,21 +487,10 @@ esac
 # network
 case "$net_choice" in
     1)
-        if [[ "$INSTALL_OPENRC" == "true" ]]; then
-            pacman -S --noconfirm networkmanager-openrc
-            rc-update add NetworkManager default
-        else
-            systemctl enable NetworkManager
-        fi
+        systemctl enable NetworkManager
         ;;
     2)
-        # iwd needs EnableNetworkConfiguration set or you connect but get no ip
-        if [[ "$INSTALL_OPENRC" == "true" ]]; then
-            rc-update add iwd default
-            rc-update add dhcpcd default
-        else
-            systemctl enable iwd systemd-resolved dhcpcd
-        fi
+        systemctl enable iwd systemd-resolved dhcpcd
         mkdir -p /etc/iwd
         cat > /etc/iwd/main.conf <<IWDCONF
 [General]
@@ -598,82 +504,44 @@ IWDCONF
 esac
 
 # desktop
-# openrc needs the openrc variant of display managers where available
 case $desktop_choice in
-    1)
-        pacman -S --noconfirm hyprland kitty greetd greetd-tuigreet
-        if [[ "$INSTALL_OPENRC" == "true" ]]; then
-            rc-update add greetd default
-        else
-            systemctl enable greetd
-        fi
-        ;;
-    2)
-        pacman -S --noconfirm plasma-desktop sddm konsole
-        if [[ "$INSTALL_OPENRC" == "true" ]]; then
-            pacman -S --noconfirm sddm-openrc 2>/dev/null || true
-            rc-update add sddm default
-        else
-            systemctl enable sddm
-        fi
-        ;;
-    3)
-        pacman -S --noconfirm xfce4 gvfs lightdm lightdm-gtk-greeter xfce4-terminal
-        if [[ "$INSTALL_OPENRC" == "true" ]]; then
-            pacman -S --noconfirm lightdm-openrc 2>/dev/null || true
-            rc-update add lightdm default
-        else
-            systemctl enable lightdm
-        fi
-        ;;
+    1) pacman -S --noconfirm hyprland kitty greetd greetd-tuigreet; systemctl enable greetd ;;
+    2) pacman -S --noconfirm plasma-desktop sddm konsole; systemctl enable sddm ;;
+    3) pacman -S --noconfirm xfce4 gvfs lightdm lightdm-gtk-greeter xfce4-terminal; systemctl enable lightdm ;;
 esac
 
-# openrc base services
-if [[ "$INSTALL_OPENRC" == "true" ]]; then
-    rc-update add elogind boot
-    rc-update add dbus default
-fi
-
-# aur helper - helper name is resolved by the outer shell before chroot runs
-# so AUR_HELPER is a plain string inside the heredoc, not a variable reference
-AUR_HELPER="$([[ "$aur_helper" == "1" ]] && echo "yay" || echo "paru")"
+# aur helper
 case $aur_helper in
     1|2)
-        # makepkg refuses to run as root, so we drop to the user we created
-        # HOME must be set correctly or gpg and go/rust caches will break
-        # --skippgpcheck is safe here - user can re-verify keys after install
+        helper=\$([[ "$aur_helper" == "1" ]] && echo "yay" || echo "paru")
         (
             cd /tmp
-            git clone "https://aur.archlinux.org/${AUR_HELPER}.git"
-            chown -R "$username:$username" "${AUR_HELPER}"
-            cd "${AUR_HELPER}"
-            sudo -u "$username" HOME="/home/$username" \
-                makepkg -si --noconfirm --skippgpcheck
+            git clone "https://aur.archlinux.org/\$helper.git"
+            chown -R "$username:$username" "\$helper"
+            cd "\$helper"
+            sudo -u "$username" makepkg -si --noconfirm
         )
         ;;
 esac
 
 # --------------------------------------------------------
-# kernel tuning - applied when auto-tune was picked
-# also applies base sysctl/io tweaks regardless of kernel choice
+# kernel tuning
 # --------------------------------------------------------
 
-# grub params - base ones always go in, auto-tune adds extras
+# base grub params, nvidia drm modeset, and auto-tune extras if picked
 GRUB_EXTRAS="quiet splash audit=0"
 
-# nvidia drm modeset needs to be in grub or wayland wont work
 if [[ "$gpu_choice" == "1" || "$gpu_choice" == "2" ]]; then
     GRUB_EXTRAS="\$GRUB_EXTRAS nvidia_drm.modeset=1"
 fi
 
-# auto-tune params from hardware detection
 if [[ "$AUTO_TUNE" == "true" ]]; then
     GRUB_EXTRAS="\$GRUB_EXTRAS $KERN_PARAMS"
 fi
 
 sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_EXTRAS |" /etc/default/grub
 
-# sysctl - memory and network tweaks, always applied
+# sysctl tweaks
 mkdir -p /etc/sysctl.d
 cat > /etc/sysctl.d/99-zerene.conf <<SYSCTL
 vm.swappiness = $SWAPPINESS
@@ -688,11 +556,11 @@ net.ipv4.tcp_tw_reuse = 1
 fs.inotify.max_user_watches = 524288
 SYSCTL
 
-# io scheduler udev rule
+# io scheduler
 mkdir -p /etc/udev/rules.d
 echo '$IO_SCHED_RULE' > /etc/udev/rules.d/60-io-scheduler.rules
 
-# cpu governor via tmpfiles
+# cpu governor
 mkdir -p /etc/tmpfiles.d
 if [[ "$IS_LAPTOP" == "true" ]]; then
     echo "w /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor - - - - powersave" \
@@ -702,7 +570,7 @@ else
         > /etc/tmpfiles.d/cpu-governor.conf
 fi
 
-# zram compressed swap - faster than disk, sized to half of ram
+# zram
 pacman -S --noconfirm zram-generator
 cat > /etc/systemd/zram-generator.conf <<ZRAM
 [zram0]
@@ -710,7 +578,7 @@ zram-size = ${RAM_HALF}M
 compression-algorithm = zstd
 ZRAM
 
-# write a summary file so you can check what got applied
+# tuning summary
 cat > /etc/zerene-tune.txt <<TUNE
 zerene auto tuning - applied at install
 
@@ -721,8 +589,8 @@ disk:       $DISK_TYPE
 laptop:     $IS_LAPTOP
 vm:         $IS_VM
 kernel:     $KERNEL_PKG
+headers:    $KERNEL_HEADERS
 auto-tune:  $AUTO_TUNE
-openrc:     $INSTALL_OPENRC
 
 grub extras: \$GRUB_EXTRAS
 swappiness:  $SWAPPINESS
@@ -751,25 +619,4 @@ umount -R /mnt 2>/dev/null || true
 msg "zerene os installed!"
 echo
 echo "tuning info saved to /etc/zerene-tune.txt"
-echo
-
-# show a summary of any errors that were logged during install
-# if the log has entries beyond the header, print them so nothing is missed
-ERROR_COUNT=$(grep -c '^\[' "$ERROR_LOG" 2>/dev/null || echo 0)
-if [[ "$ERROR_COUNT" -gt 0 ]]; then
-    warn "$ERROR_COUNT error(s) were logged during install - check $ERROR_LOG"
-    echo
-    tail -n "$ERROR_COUNT" "$ERROR_LOG"
-    echo
-else
-    msg "no errors logged"
-fi
-echo
-
-# ask before rebooting so the user can check output first
-read -rp "reboot now? [Y/n]: " reboot_yn
-if [[ ! "$reboot_yn" =~ ^[Nn]$ ]]; then
-    reboot
-else
-    echo "you can reboot manually when ready"
-fi
+echo "you can reboot now"
