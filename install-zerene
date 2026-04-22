@@ -18,9 +18,6 @@ if ! ping -c 1 google.com &>/dev/null; then
     nmtui
 fi
 
-# --------------------------------------------------------
-# all questions up front before anything gets installed
-# --------------------------------------------------------
 
 # user
 read -rp "hostname: " hostname
