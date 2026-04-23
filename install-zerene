@@ -328,22 +328,36 @@ audio_choice=$(tui_menu "Audio" "Select audio system:" \
 header "Desktop Environment"
 
 desktop_choice=$(tui_menu "Desktop Environment" "Select your desktop environment:" \
-    "1"  "Hyprland    wayland tiling compositor" \
-    "2"  "KDE Plasma  full featured kde desktop" \
-    "3"  "XFCE4       lightweight classic desktop" \
-    "4"  "GNOME       clean modern desktop" \
-    "5"  "Sway        wayland tiling, minimal" \
-    "6"  "i3          x11 tiling, very lightweight" \
-    "7"  "Cinnamon    traditional, based on gnome" \
-    "8"  "MATE        classic gnome 2 fork" \
-    "9"  "LXQt        super lightweight qt desktop" \
-    "10" "Budgie      clean and simple" \
-    "11" "Deepin      polished desktop env" \
-    "12" "Openbox     bare window manager only" \
-    "13" "bspwm       tiling wm, scriptable" \
-    "14" "Qtile       python tiling wm" \
-    "15" "COSMIC      new rust desktop from system76" \
-    "16" "None        no desktop") || err "cancelled"
+    "1"  "Hyprland      wayland tiling compositor" \
+    "2"  "KDE Plasma    full featured kde desktop" \
+    "3"  "XFCE4         lightweight classic desktop" \
+    "4"  "GNOME         clean modern desktop" \
+    "5"  "Sway          wayland tiling, minimal" \
+    "6"  "i3            x11 tiling, very lightweight" \
+    "7"  "Cinnamon      traditional, based on gnome" \
+    "8"  "MATE          classic gnome 2 fork" \
+    "9"  "LXQt          super lightweight qt desktop" \
+    "10" "Budgie        clean and simple" \
+    "11" "Deepin        polished desktop env" \
+    "12" "Openbox       bare window manager only" \
+    "13" "bspwm         tiling wm, scriptable" \
+    "14" "Qtile         python tiling wm" \
+    "15" "COSMIC        new rust desktop from system76" \
+    "16" "WindowMaker   classic NeXTSTEP look and feel" \
+    "17" "Fluxbox       fast and light, tabbed windows" \
+    "18" "IceWM         ultra lightweight, taskbar wm" \
+    "19" "Enlightenment e26, effects and compositing" \
+    "20" "Niri          scrollable wayland tiling wm" \
+    "21" "River         wayland dynamic tiling wm" \
+    "22" "Wayfire       wayland compositor, 3d effects" \
+    "23" "Herbstluftwm  manual tiling, ipc driven" \
+    "24" "dwm           suckless dynamic wm, patched" \
+    "25" "awesome       lua configured tiling wm" \
+    "26" "spectrwm      minimalist bsd-style tiling" \
+    "27" "LXDE          lightest full de, gtk2" \
+    "28" "Pantheon      elementary os desktop" \
+    "29" "Plasma Mobile kde mobile shell" \
+    "30" "None          no desktop") || err "cancelled"
 
 header "AUR Helper"
 
@@ -435,11 +449,16 @@ esac
 # --------------------------------------------------------
 
 case $desktop_choice in
-    1) DN="Hyprland" ;;  2) DN="KDE Plasma" ;; 3) DN="XFCE4" ;;
-    4) DN="GNOME" ;;     5) DN="Sway" ;;        6) DN="i3" ;;
-    7) DN="Cinnamon" ;;  8) DN="MATE" ;;         9) DN="LXQt" ;;
-    10) DN="Budgie" ;;   11) DN="Deepin" ;;      12) DN="Openbox" ;;
-    13) DN="bspwm" ;;    14) DN="Qtile" ;;       15) DN="COSMIC" ;;
+    1)  DN="Hyprland" ;;      2)  DN="KDE Plasma" ;;    3)  DN="XFCE4" ;;
+    4)  DN="GNOME" ;;         5)  DN="Sway" ;;           6)  DN="i3" ;;
+    7)  DN="Cinnamon" ;;      8)  DN="MATE" ;;            9)  DN="LXQt" ;;
+    10) DN="Budgie" ;;        11) DN="Deepin" ;;          12) DN="Openbox" ;;
+    13) DN="bspwm" ;;         14) DN="Qtile" ;;           15) DN="COSMIC" ;;
+    16) DN="WindowMaker" ;;   17) DN="Fluxbox" ;;         18) DN="IceWM" ;;
+    19) DN="Enlightenment" ;; 20) DN="Niri" ;;            21) DN="River" ;;
+    22) DN="Wayfire" ;;       23) DN="Herbstluftwm" ;;    24) DN="dwm" ;;
+    25) DN="awesome" ;;       26) DN="spectrwm" ;;        27) DN="LXDE" ;;
+    28) DN="Pantheon" ;;      29) DN="Plasma Mobile" ;;
     *) DN="None" ;;
 esac
 case $aur_helper in 1) AN="yay" ;; 2) AN="paru" ;; *) AN="none" ;; esac
@@ -855,6 +874,86 @@ case $desktop_choice in
     13) pacman -S --noconfirm bspwm sxhkd dmenu lightdm lightdm-gtk-greeter rxvt-unicode; systemctl enable lightdm ;;
     14) pacman -S --noconfirm qtile python-psutil lightdm lightdm-gtk-greeter alacritty; systemctl enable lightdm ;;
     15) pacman -S --noconfirm cosmic-session; systemctl enable cosmic-greeter ;;
+    16)
+        # windowmaker - classic nextstep/openstep look and feel from the 90s
+        pacman -S --noconfirm windowmaker wmaker-crm libwraster lightdm lightdm-gtk-greeter xterm
+        # set wmaker as the session for lightdm
+        mkdir -p /usr/share/xsessions
+        cat > /usr/share/xsessions/wmaker.desktop <<WMDT
+[Desktop Entry]
+Name=WindowMaker
+Exec=wmaker
+Type=Application
+WMDT
+        systemctl enable lightdm ;;
+    17)
+        # fluxbox - fast and minimal, tabbed window management, great for old hardware
+        pacman -S --noconfirm fluxbox feh rofi lightdm lightdm-gtk-greeter xterm
+        systemctl enable lightdm ;;
+    18)
+        # icewm - ultra lightweight wm with a taskbar, very low resource usage
+        pacman -S --noconfirm icewm icewm-themes feh lightdm lightdm-gtk-greeter xterm
+        systemctl enable lightdm ;;
+    19)
+        # enlightenment e26 - compositing wm with effects, unique shelf-based de
+        pacman -S --noconfirm enlightenment terminology lightdm lightdm-gtk-greeter
+        systemctl enable lightdm ;;
+    20)
+        # niri - scrollable-tiling wayland compositor, workspaces scroll left/right
+        pacman -S --noconfirm niri foot greetd greetd-tuigreet
+        systemctl enable greetd ;;
+    21)
+        # river - dynamic tiling wayland compositor inspired by dwm
+        pacman -S --noconfirm river foot waybar greetd greetd-tuigreet
+        systemctl enable greetd ;;
+    22)
+        # wayfire - wayland compositor with a plugin system and 3d cube effects
+        pacman -S --noconfirm wayfire wcm wf-shell foot greetd greetd-tuigreet
+        systemctl enable greetd ;;
+    23)
+        # herbstluftwm - manual tiling wm controlled entirely via ipc commands
+        pacman -S --noconfirm herbstluftwm dmenu rxvt-unicode lightdm lightdm-gtk-greeter
+        systemctl enable lightdm ;;
+    24)
+        # dwm - suckless dynamic wm, minimal by design, customized via patched source
+        pacman -S --noconfirm xorg-server xorg-xinit base-devel libx11 libxinerama libxft
+        cd /tmp
+        git clone https://git.suckless.org/dwm
+        cd dwm
+        make install
+        cd /
+        # create xinitrc and xsession entry so lightdm can launch it
+        echo "exec dwm" > /home/$username/.xinitrc
+        chown $username:$username /home/$username/.xinitrc
+        mkdir -p /usr/share/xsessions
+        cat > /usr/share/xsessions/dwm.desktop <<DWMDT
+[Desktop Entry]
+Name=dwm
+Exec=dwm
+Type=Application
+DWMDT
+        pacman -S --noconfirm lightdm lightdm-gtk-greeter st dmenu
+        systemctl enable lightdm ;;
+    25)
+        # awesome - lua-configured tiling wm, very extensible with widgets
+        pacman -S --noconfirm awesome vicious lua lightdm lightdm-gtk-greeter alacritty
+        systemctl enable lightdm ;;
+    26)
+        # spectrwm - minimalist tiling wm inspired by xmonad and dwm, bsd roots
+        pacman -S --noconfirm spectrwm dmenu rxvt-unicode lightdm lightdm-gtk-greeter
+        systemctl enable lightdm ;;
+    27)
+        # lxde - the lightest full desktop environment, uses gtk2 and openbox under the hood
+        pacman -S --noconfirm lxde lxappearance lightdm lightdm-gtk-greeter
+        systemctl enable lightdm ;;
+    28)
+        # pantheon - elementary os desktop shell, clean and mac-like
+        pacman -S --noconfirm pantheon-session lightdm lightdm-pantheon-greeter
+        systemctl enable lightdm ;;
+    29)
+        # plasma mobile - kde mobile shell for touch devices and phones
+        pacman -S --noconfirm plasma-mobile sddm
+        systemctl enable sddm ;;
 esac
 
 echo ""
