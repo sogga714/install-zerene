@@ -2,9 +2,6 @@
 
 # zerene os installer - xenovia 1
 
-# --------------------------------------------------------
-# colors - zerene blue #0504D8
-# --------------------------------------------------------
 
 BLUE='\033[38;2;5;4;216m'       # #0504D8 zerene blue
 LBLUE='\033[38;2;100;110;255m'  # lighter blue for accents
@@ -36,11 +33,6 @@ err()  { echo -e "${RED}  ERROR:${RESET} $1"; exit 1; }
 
 # step label printed before running something visible
 step() { echo -e "\n${BLUE}${BOLD}  ──  $1  ──${RESET}\n"; }
-
-# --------------------------------------------------------
-# turbine spinner - shows while silent background ops run
-# only used for things that don't print their own output
-# --------------------------------------------------------
 
 SPIN_PID=""
 
