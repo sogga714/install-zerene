@@ -3,141 +3,165 @@
 # zerene os installer - xenovia 1
 
 # --------------------------------------------------------
-# colors and helpers
+# colors - zerene blue #0504D8
 # --------------------------------------------------------
 
-RED='\033[0;31m'
-PINK='\033[38;2;255;50;150m'
-CYAN='\033[0;36m'
+BLUE='\033[38;2;5;4;216m'       # #0504D8 zerene blue
+LBLUE='\033[38;2;100;110;255m'  # lighter blue for accents
 WHITE='\033[1;37m'
+GRAY='\033[38;2;160;160;180m'
 DIM='\033[2m'
-RESET='\033[0m'
 BOLD='\033[1m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+RESET='\033[0m'
 
-msg()  { echo -e "${PINK}>>>${RESET} $1"; }
-warn() { echo -e "${RED}!!!${RESET} $1"; }
-err()  { echo -e "${RED}ERROR:${RESET} $1"; exit 1; }
+# draw a horizontal rule
+rule() { echo -e "${BLUE}$(printf '─%.0s' $(seq 1 60))${RESET}"; }
+
+# section header like archinstall but zerene style
+header() {
+    echo
+    rule
+    echo -e "${BLUE}${BOLD}  $1${RESET}"
+    rule
+    echo
+}
+
+# status messages
+msg()  { echo -e "${BLUE}  ›${RESET} $1"; }
+ok()   { echo -e "${GREEN}  ✓${RESET} $1"; }
+warn() { echo -e "${RED}  !${RESET} $1"; }
+err()  { echo -e "${RED}  ERROR:${RESET} $1"; exit 1; }
+
+# step label printed before running something visible
+step() { echo -e "\n${BLUE}${BOLD}  ──  $1  ──${RESET}\n"; }
 
 # --------------------------------------------------------
-# spinning turbine animation
-# shows while something heavy is running in the background
-# usage: spin_start; do_something; spin_stop
+# turbine spinner - shows while silent background ops run
+# only used for things that don't print their own output
 # --------------------------------------------------------
 
 SPIN_PID=""
 
 spin_start() {
     local label="${1:-working...}"
-    # turbine blade frames - rotates like a fan/turbine
-    local frames=('◢◤' '◥◣' '◤◢' '◣◥')
     local blades=('⣾' '⣽' '⣻' '⢿' '⡿' '⣟' '⣯' '⣷')
+    local outer=('◢◤' '◥◣' '◤◢' '◣◥')
     (
-        local i=0
-        local b=0
+        local i=0 b=0
         while true; do
-            local blade="${blades[$b]}"
-            local frame="${frames[$i]}"
-            printf "\r${PINK}  %s ${WHITE}%s${RESET}  ${DIM}%s${RESET}   " \
-                "$blade" "$frame" "$label"
-            sleep 0.08
-            i=$(( (i + 1) % 4 ))
-            b=$(( (b + 1) % 8 ))
+            printf "\r${BLUE}  %s %s${RESET}  ${GRAY}%s${RESET}    " \
+                "${blades[$b]}" "${outer[$i]}" "$label"
+            sleep 0.07
+            i=$(( (i+1) % 4 ))
+            b=$(( (b+1) % 8 ))
         done
     ) &
     SPIN_PID=$!
 }
 
 spin_stop() {
-    if [[ -n "$SPIN_PID" ]]; then
-        kill "$SPIN_PID" 2>/dev/null
-        wait "$SPIN_PID" 2>/dev/null
-        SPIN_PID=""
-        printf "\r%-60s\r" " "
-    fi
+    [[ -n "$SPIN_PID" ]] && kill "$SPIN_PID" 2>/dev/null && wait "$SPIN_PID" 2>/dev/null
+    SPIN_PID=""
+    printf "\r%-70s\r" " "
 }
 
-# make sure spinner dies if script exits unexpectedly
 trap spin_stop EXIT
 
 # --------------------------------------------------------
-# whiptail helper wrappers so menus are less verbose
+# whiptail wrappers - themed to zerene blue via NEWT_COLORS
 # --------------------------------------------------------
 
-# single choice menu - returns selected tag
+# whiptail reads NEWT_COLORS to theme its dialogs
+# root=blue bg, window=dark, title=bright blue, button=blue
+export NEWT_COLORS='
+root=,black
+window=white,black
+shadow=black,black
+border=blue,black
+title=brightblue,black
+roottext=white,black
+listbox=white,black
+actlistbox=black,brightblue
+sellistbox=black,brightblue
+actsellistbox=black,brightblue
+textbox=white,black
+acttextbox=black,brightblue
+button=black,brightblue
+actbutton=white,blue
+compactbutton=white,black
+checkbox=white,black
+actcheckbox=black,brightblue
+entry=white,black
+disentry=gray,black
+label=brightblue,black
+emptyscale=,black
+fullscale=brightblue,black
+helpline=black,brightblue
+'
+
 tui_menu() {
-    local title="$1"
-    local prompt="$2"
-    shift 2
-    whiptail --title "$title" --menu "$prompt" 20 70 12 "$@" 3>&1 1>&2 2>&3
+    local title="$1" prompt="$2"; shift 2
+    whiptail --title "  $title  " --menu "$prompt" 22 72 14 "$@" 3>&1 1>&2 2>&3
 }
 
-# yes/no box - returns 0 for yes, 1 for no
 tui_yesno() {
-    local title="$1"
-    local prompt="$2"
-    whiptail --title "$title" --yesno "$prompt" 10 60
+    whiptail --title "  $1  " --yesno "$2" 10 62
 }
 
-# input box - returns typed value
 tui_input() {
-    local title="$1"
-    local prompt="$2"
-    local default="${3:-}"
-    whiptail --title "$title" --inputbox "$prompt" 10 60 "$default" 3>&1 1>&2 2>&3
+    local title="$1" prompt="$2" default="${3:-}"
+    whiptail --title "  $title  " --inputbox "$prompt" 10 62 "$default" 3>&1 1>&2 2>&3
 }
 
-# password box
 tui_pass() {
-    local title="$1"
-    local prompt="$2"
-    whiptail --title "$title" --passwordbox "$prompt" 10 60 3>&1 1>&2 2>&3
+    whiptail --title "  $1  " --passwordbox "$2" 10 62 3>&1 1>&2 2>&3
 }
 
-# info/message box (no input)
 tui_msg() {
-    local title="$1"
-    local prompt="$2"
-    whiptail --title "$title" --msgbox "$prompt" 12 65
+    whiptail --title "  $1  " --msgbox "$2" 12 62
 }
 
 # --------------------------------------------------------
-# splash screen with turbine
+# splash
 # --------------------------------------------------------
 
 clear
 echo
-echo -e "${PINK}"
+echo -e "${BLUE}${BOLD}"
 cat << 'LOGO'
-  ███████╗███████╗██████╗ ███████╗███╗   ██╗███████╗
-  ╚══███╔╝██╔════╝██╔══██╗██╔════╝████╗  ██║██╔════╝
-    ███╔╝ █████╗  ██████╔╝█████╗  ██╔██╗ ██║█████╗
-   ███╔╝  ██╔══╝  ██╔══██╗██╔══╝  ██║╚██╗██║██╔══╝
-  ███████╗███████╗██║  ██║███████╗██║ ╚████║███████╗
-  ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝
+    ███████╗███████╗██████╗ ███████╗███╗   ██╗███████╗
+    ╚══███╔╝██╔════╝██╔══██╗██╔════╝████╗  ██║██╔════╝
+      ███╔╝ █████╗  ██████╔╝█████╗  ██╔██╗ ██║█████╗
+     ███╔╝  ██╔══╝  ██╔══██╗██╔══╝  ██║╚██╗██║██╔══╝
+    ███████╗███████╗██║  ██║███████╗██║ ╚████║███████╗
+    ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝
 LOGO
 echo -e "${RESET}"
-echo -e "${DIM}          xenovia 1 installer${RESET}"
+echo -e "${GRAY}                  xenovia 1  ·  installer${RESET}"
+echo
+rule
 echo
 
-# check whiptail is available
+# check whiptail
 if ! command -v whiptail &>/dev/null; then
     msg "installing whiptail..."
-    pacman -S --noconfirm libnewt
+    pacman -S --noconfirm libnewt &>/dev/null
 fi
 
-# check internet
-msg "checking internet connection..."
+# internet check
+msg "checking internet..."
 if ! ping -c 1 -W 3 google.com &>/dev/null; then
-    tui_msg "No Internet" "No internet detected.\n\nThe installer will open nmtui so you can connect.\nCome back and re-run the installer after connecting."
+    tui_msg "No Internet" "No internet connection detected.\n\nOpening nmtui — connect to your network then re-run the installer."
     nmtui
-    ping -c 1 -W 3 google.com &>/dev/null || err "still no internet, exiting"
+    ping -c 1 -W 3 google.com &>/dev/null || err "no internet, cannot continue"
 fi
-
-msg "connected"
+ok "connected"
 echo
 
 # --------------------------------------------------------
-# hardware scan up front - used in kernel menu
+# hardware scan
 # --------------------------------------------------------
 
 spin_start "scanning hardware"
@@ -147,9 +171,11 @@ CPU_CORES=$(nproc)
 CPU_FAMILY=$(grep -m1 "cpu family" /proc/cpuinfo | awk '{print $4}')
 CPU_MODEL=$(grep -m1 "^model[[:space:]]" /proc/cpuinfo | awk '{print $3}')
 RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
+RAM_HALF=$(( RAM_MB / 2 ))
 IS_LAPTOP=false
 IS_VM=false
 DISK_TYPE="hdd"
+SWAPPINESS=10
 
 [ -d /sys/class/power_supply/BAT0 ] || [ -d /sys/class/power_supply/BAT1 ] && IS_LAPTOP=true
 grep -qi "virtualbox\|vmware\|kvm\|qemu\|hyper-v" /sys/class/dmi/id/product_name 2>/dev/null && IS_VM=true
@@ -158,43 +184,43 @@ CPU_GEN=0
 if [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
     CPU_GEN=$(grep -m1 "model name" /proc/cpuinfo | grep -oP "\d+(?:st|nd|rd|th) Gen" | grep -oP "^\d+" || echo 0)
 fi
-
-RAM_HALF=$(( RAM_MB / 2 ))
-SWAPPINESS=10
 spin_stop
 
+ok "hardware scanned: ${CPU_MODEL_NAME} · ${CPU_CORES} cores · ${RAM_MB}MB RAM"
+echo
+
 # --------------------------------------------------------
-# all questions up front
+# configuration - all questions before anything installs
 # --------------------------------------------------------
 
-# identity
-hostname=$(tui_input "Zerene OS Installer" "Enter hostname:" "zerene") || err "cancelled"
-username=$(tui_input "Zerene OS Installer" "Enter username:") || err "cancelled"
-password=$(tui_pass "Zerene OS Installer" "Enter password:") || err "cancelled"
-password2=$(tui_pass "Zerene OS Installer" "Confirm password:") || err "cancelled"
+header "System Identity"
+
+hostname=$(tui_input "Hostname" "Enter a hostname for this machine:" "zerene") || err "cancelled"
+username=$(tui_input "User Account" "Enter your username:") || err "cancelled"
+password=$(tui_pass "User Account" "Enter password:") || err "cancelled"
+password2=$(tui_pass "User Account" "Confirm password:") || err "cancelled"
 [[ "$password" != "$password2" ]] && err "passwords do not match"
 
-# disk
+header "Disk"
+
 DISK_LIST=()
 while IFS= read -r line; do
     name=$(echo "$line" | awk '{print $1}')
     size=$(echo "$line" | awk '{print $2}')
     model=$(echo "$line" | awk '{$1=$2=""; print $0}' | xargs)
-    DISK_LIST+=("$name" "$size - $model")
+    DISK_LIST+=("$name" "$size  $model")
 done < <(lsblk -dno NAME,SIZE,MODEL | grep -v "loop")
 
-DISK_ID=$(tui_menu "Disk Selection" "Select disk to install on:" "${DISK_LIST[@]}") || err "cancelled"
+DISK_ID=$(tui_menu "Disk Selection" "Select the disk to install Zerene OS on:" "${DISK_LIST[@]}") || err "cancelled"
 TARGET_DISK="/dev/$DISK_ID"
 [[ $TARGET_DISK == *"nvme"* ]] && P="p" || P=""
 
-# detect disk type now that we have it
 if [[ "$TARGET_DISK" == *"nvme"* ]]; then
     DISK_TYPE="nvme"
 elif [[ "$(cat /sys/block/$(basename $TARGET_DISK)/queue/rotational 2>/dev/null)" == "0" ]]; then
     DISK_TYPE="ssd"
 fi
 
-# io scheduler based on disk type
 if [[ "$DISK_TYPE" == "nvme" ]]; then
     IO_SCHED_RULE='ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/scheduler}="none"'
 elif [[ "$DISK_TYPE" == "ssd" ]]; then
@@ -203,22 +229,25 @@ else
     IO_SCHED_RULE='ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"'
 fi
 
-tui_yesno "Format Disk" "Format $TARGET_DISK?\n\nThis will WIPE everything on the disk." && FORMAT_DISK=true || FORMAT_DISK=false
+tui_yesno "Format Disk" "Wipe and format $TARGET_DISK ?\n\nThis will erase ALL data on this disk." \
+    && FORMAT_DISK=true || FORMAT_DISK=false
 
-# nix
-nix_choice=$(tui_menu "Nix Package Manager" "Include Nix?" \
-    "1" "Yes - install Nix multi-user daemon" \
+header "Nix Package Manager"
+
+nix_choice=$(tui_menu "Nix" "Include Nix package manager?" \
+    "1" "Yes - install Nix (multi-user daemon mode)" \
     "2" "No  - skip Nix") || err "cancelled"
 
-# kernel - show detected hardware in the prompt
-KERN_PROMPT="Detected: $CPU_MODEL_NAME\nCores: $CPU_CORES  RAM: ${RAM_MB}MB  Disk: $DISK_TYPE  Laptop: $IS_LAPTOP\n\nSelect kernel:"
+header "Kernel"
 
-kernel_choice=$(tui_menu "Kernel Selection" "$KERN_PROMPT" \
-    "1" "linux          - stable default arch kernel" \
-    "2" "linux-zen      - better for gaming, lower latency" \
-    "3" "linux-hardened - security focused" \
-    "4" "auto-tune      - picks best kernel and tunes for your hardware" \
-    "5" "advanced       - configure it yourself (menuconfig/vim/nano)") || err "cancelled"
+KERN_PROMPT="  CPU:    $CPU_MODEL_NAME\n  Cores:  $CPU_CORES     RAM: ${RAM_MB} MB\n  Disk:   $DISK_TYPE     Laptop: $IS_LAPTOP\n\nSelect a kernel:"
+
+kernel_choice=$(tui_menu "Kernel" "$KERN_PROMPT" \
+    "1" "linux          - stable, default arch kernel" \
+    "2" "linux-zen      - lower latency, better for gaming/desktop" \
+    "3" "linux-hardened - security hardened" \
+    "4" "auto-tune      - zerene picks best kernel + tunes for your hw" \
+    "5" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled"
 
 KERNEL_PKG="linux"
 KERNEL_HEADERS="linux-headers"
@@ -232,14 +261,14 @@ case "$kernel_choice" in
     3) KERNEL_PKG="linux-hardened"; KERNEL_HEADERS="linux-hardened-headers" ;;
     4)
         AUTO_TUNE=true
-        if [[ "$IS_VM" == "true" ]]; then
-            KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
-        elif [[ "$CPU_VENDOR" == "AuthenticAMD" ]] && [[ "$IS_LAPTOP" == "false" ]]; then
+        if   [[ "$IS_VM" == "true" ]]; then
+            KERNEL_PKG="linux";     KERNEL_HEADERS="linux-headers"
+        elif [[ "$CPU_VENDOR" == "AuthenticAMD" && "$IS_LAPTOP" == "false" ]]; then
             KERNEL_PKG="linux-zen"; KERNEL_HEADERS="linux-zen-headers"
         else
-            KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
+            KERNEL_PKG="linux";     KERNEL_HEADERS="linux-headers"
         fi
-
+        # amd tuning
         if [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
             if [[ "$CPU_FAMILY" -ge 25 ]] || { [[ "$CPU_FAMILY" -eq 23 ]] && [[ "$CPU_MODEL" -ge 49 ]]; }; then
                 KERN_PARAMS="$KERN_PARAMS amd_pstate=active"
@@ -247,16 +276,16 @@ case "$kernel_choice" in
             KERN_PARAMS="$KERN_PARAMS processor.max_cstate=5"
             [[ "$IS_VM" == "false" ]] && KERN_PARAMS="$KERN_PARAMS spec_store_bypass_disable=prctl spectre_v2=off"
         fi
-        if [[ "$CPU_VENDOR" == "GenuineIntel" ]] && [[ "$CPU_GEN" -ge 6 ]]; then
-            KERN_PARAMS="$KERN_PARAMS intel_pstate=active"
-        fi
+        # intel tuning
+        [[ "$CPU_VENDOR" == "GenuineIntel" && "$CPU_GEN" -ge 6 ]] && KERN_PARAMS="$KERN_PARAMS intel_pstate=active"
+        # laptop extras
         [[ "$IS_LAPTOP" == "true" ]] && KERN_PARAMS="$KERN_PARAMS pcie_aspm=force nmi_watchdog=0"
         [[ "$RAM_MB" -lt 4096 ]] && SWAPPINESS=30 || SWAPPINESS=10
         ;;
     5)
         ADVANCED_KERNEL=true
         KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
-        kconfig_method=$(tui_menu "Kernel Config Method" "How do you want to configure the kernel?" \
+        kconfig_method=$(tui_menu "Kernel Config" "Choose your config method:" \
             "1" "menuconfig - ncurses TUI" \
             "2" "xconfig    - Qt GUI (needs X)" \
             "3" "vim        - edit .config in vim" \
@@ -264,132 +293,137 @@ case "$kernel_choice" in
         ;;
 esac
 
-# keyboard layout
+header "System"
+
 kbd_choice=$(tui_menu "Keyboard Layout" "Select keyboard layout:" \
-    "us" "QWERTY (US)" \
-    "fr" "AZERTY (FR)") || err "cancelled"
+    "us" "QWERTY  (US)" \
+    "fr" "AZERTY  (FR)") || err "cancelled"
 LAYOUT="$kbd_choice"
 
-# audio
 audio_choice=$(tui_menu "Audio" "Select audio system:" \
     "1" "Pipewire   - modern, recommended" \
     "2" "Pulseaudio - classic") || err "cancelled"
 
-# desktop
-desktop_choice=$(tui_menu "Desktop Environment" "Select desktop environment:" \
-    "1"  "Hyprland   - wayland tiling compositor" \
-    "2"  "KDE Plasma - full featured kde desktop" \
-    "3"  "XFCE4      - lightweight classic desktop" \
-    "4"  "GNOME      - clean modern desktop" \
-    "5"  "Sway       - wayland tiling, minimal" \
-    "6"  "i3         - x11 tiling, very lightweight" \
-    "7"  "Cinnamon   - traditional, based on gnome" \
-    "8"  "MATE       - classic gnome 2 fork" \
-    "9"  "LXQt       - super lightweight qt desktop" \
-    "10" "Budgie     - clean and simple" \
-    "11" "Deepin     - polished chinese desktop" \
-    "12" "Openbox    - bare window manager only" \
-    "13" "bspwm      - tiling wm, scriptable" \
-    "14" "Qtile      - python tiling wm" \
-    "15" "COSMIC     - new rust desktop from system76" \
-    "16" "None       - no desktop") || err "cancelled"
+header "Desktop Environment"
 
-# aur helper
-aur_helper=$(tui_menu "AUR Helper" "Select AUR helper:" \
-    "1" "yay  - go based, popular" \
-    "2" "paru - rust based, faster" \
-    "3" "none - skip") || err "cancelled"
+desktop_choice=$(tui_menu "Desktop Environment" "Select your desktop environment:" \
+    "1"  "Hyprland    wayland tiling compositor" \
+    "2"  "KDE Plasma  full featured kde desktop" \
+    "3"  "XFCE4       lightweight classic desktop" \
+    "4"  "GNOME       clean modern desktop" \
+    "5"  "Sway        wayland tiling, minimal" \
+    "6"  "i3          x11 tiling, very lightweight" \
+    "7"  "Cinnamon    traditional, based on gnome" \
+    "8"  "MATE        classic gnome 2 fork" \
+    "9"  "LXQt        super lightweight qt desktop" \
+    "10" "Budgie      clean and simple" \
+    "11" "Deepin      polished desktop env" \
+    "12" "Openbox     bare window manager only" \
+    "13" "bspwm       tiling wm, scriptable" \
+    "14" "Qtile       python tiling wm" \
+    "15" "COSMIC      new rust desktop from system76" \
+    "16" "None        no desktop") || err "cancelled"
 
-# gpu
+header "AUR Helper"
+
+aur_helper=$(tui_menu "AUR Helper" "Select AUR helper to install:" \
+    "1" "yay   - go based, most popular" \
+    "2" "paru  - rust based, faster" \
+    "3" "none  - skip") || err "cancelled"
+
+header "GPU Driver"
+
 gpu_choice=$(tui_menu "GPU Driver" "Select GPU driver:" \
-    "1" "NVIDIA Modern  - RTX/Turing, GTX 1650 and newer" \
-    "2" "NVIDIA Legacy  - Pascal GTX 10xx and older (AUR)" \
-    "3" "AMD            - mesa + vulkan, RDNA/GCN" \
-    "4" "Intel          - integrated graphics" \
-    "5" "VM / None      - virtual machine or skip") || err "cancelled"
+    "1" "NVIDIA Modern   RTX / Turing, GTX 1650 and newer" \
+    "2" "NVIDIA Legacy   Pascal GTX 10xx and older  (AUR)" \
+    "3" "AMD             mesa + vulkan-radeon, RDNA/GCN" \
+    "4" "Intel           integrated graphics" \
+    "5" "VM / None       virtual machine or skip") || err "cancelled"
 
-# network
+header "Network"
+
 net_choice=$(tui_menu "Network Manager" "Select network manager:" \
-    "1" "NetworkManager - full featured, has nmtui" \
-    "2" "iwd (iwctl)    - lightweight, fast, WPA3") || err "cancelled"
+    "1" "NetworkManager  full featured, nmtui/nmcli support" \
+    "2" "iwd (iwctl)     lightweight, fast, WPA3") || err "cancelled"
 
 NET_PKG="networkmanager"
 [[ "$net_choice" == "2" ]] && NET_PKG="iwd dhcpcd"
 
+# --------------------------------------------------------
 # readable names for summary
+# --------------------------------------------------------
+
 case $desktop_choice in
-    1) DESKTOP_NAME="Hyprland" ;;   2) DESKTOP_NAME="KDE Plasma" ;;
-    3) DESKTOP_NAME="XFCE4" ;;      4) DESKTOP_NAME="GNOME" ;;
-    5) DESKTOP_NAME="Sway" ;;        6) DESKTOP_NAME="i3" ;;
-    7) DESKTOP_NAME="Cinnamon" ;;   8) DESKTOP_NAME="MATE" ;;
-    9) DESKTOP_NAME="LXQt" ;;       10) DESKTOP_NAME="Budgie" ;;
-    11) DESKTOP_NAME="Deepin" ;;    12) DESKTOP_NAME="Openbox" ;;
-    13) DESKTOP_NAME="bspwm" ;;     14) DESKTOP_NAME="Qtile" ;;
-    15) DESKTOP_NAME="COSMIC" ;;    16) DESKTOP_NAME="None" ;;
-    *) DESKTOP_NAME="None" ;;
+    1) DN="Hyprland" ;;  2) DN="KDE Plasma" ;; 3) DN="XFCE4" ;;
+    4) DN="GNOME" ;;     5) DN="Sway" ;;        6) DN="i3" ;;
+    7) DN="Cinnamon" ;;  8) DN="MATE" ;;         9) DN="LXQt" ;;
+    10) DN="Budgie" ;;   11) DN="Deepin" ;;      12) DN="Openbox" ;;
+    13) DN="bspwm" ;;    14) DN="Qtile" ;;       15) DN="COSMIC" ;;
+    *) DN="None" ;;
 esac
-case $aur_helper in 1) AUR_NAME="yay" ;; 2) AUR_NAME="paru" ;; *) AUR_NAME="none" ;; esac
+case $aur_helper in 1) AN="yay" ;; 2) AN="paru" ;; *) AN="none" ;; esac
 case $gpu_choice in
-    1) GPU_NAME="NVIDIA Modern" ;; 2) GPU_NAME="NVIDIA Legacy" ;;
-    3) GPU_NAME="AMD" ;;           4) GPU_NAME="Intel" ;;
-    5) GPU_NAME="VM/None" ;;
+    1) GN="NVIDIA Modern" ;; 2) GN="NVIDIA Legacy" ;;
+    3) GN="AMD" ;;           4) GN="Intel" ;; 5) GN="VM/None" ;;
 esac
-case $net_choice in 1) NET_NAME="NetworkManager" ;; 2) NET_NAME="iwd" ;; esac
-case $nix_choice in 1) NIX_NAME="yes" ;; *) NIX_NAME="no" ;; esac
-case $audio_choice in 1) AUDIO_NAME="Pipewire" ;; 2) AUDIO_NAME="Pulseaudio" ;; esac
+case $net_choice in 1) NN="NetworkManager" ;; 2) NN="iwd" ;; esac
+case $nix_choice in 1) NIXN="yes" ;; *) NIXN="no" ;; esac
+case $audio_choice in 1) AUDN="Pipewire" ;; 2) AUDN="Pulseaudio" ;; esac
 
 # --------------------------------------------------------
-# summary confirmation
+# confirm summary
 # --------------------------------------------------------
 
-SUMMARY="Review your install choices:
+SUM="
+  Hostname   $hostname
+  User       $username
+  Disk       $TARGET_DISK   (format: $FORMAT_DISK)
 
-  Hostname:   $hostname
-  Username:   $username
-  Disk:       $TARGET_DISK  (format: $FORMAT_DISK)
-  Kernel:     $KERNEL_PKG  ($KERNEL_HEADERS)
-  Auto-tune:  $AUTO_TUNE
-  Layout:     $LAYOUT
-  Audio:      $AUDIO_NAME
-  Desktop:    $DESKTOP_NAME
-  AUR Helper: $AUR_NAME
-  GPU:        $GPU_NAME
-  Network:    $NET_NAME
-  Nix:        $NIX_NAME
+  Kernel     $KERNEL_PKG
+  Headers    $KERNEL_HEADERS
+  Auto-tune  $AUTO_TUNE
 
-Proceed with installation?"
+  Layout     $LAYOUT
+  Audio      $AUDN
+  Desktop    $DN
+  AUR        $AN
+  GPU        $GN
+  Network    $NN
+  Nix        $NIXN
 
-tui_yesno "Install Summary" "$SUMMARY" || err "install cancelled by user"
+Press Enter to begin installation, Esc to cancel."
+
+tui_yesno "Confirm Installation" "$SUM" || err "cancelled"
 
 # --------------------------------------------------------
-# install starts here - nothing destructive happened before this
+# installation - output is visible from here on
 # --------------------------------------------------------
 
 clear
 echo
-echo -e "${PINK}  starting zerene os installation...${RESET}"
+echo -e "${BLUE}${BOLD}    zerene os  ·  installing...${RESET}"
+echo
+rule
 echo
 
-# partition and format
+# partition
 if [[ "$FORMAT_DISK" == "true" ]]; then
-    spin_start "partitioning $TARGET_DISK"
+    step "Partitioning $TARGET_DISK"
     swapoff -a
     parted -s "$TARGET_DISK" mklabel gpt
     parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 513MiB
     parted -s "$TARGET_DISK" set 1 esp on
     parted -s "$TARGET_DISK" mkpart primary ext4 513MiB 100%
-    mkfs.fat -F32 "${TARGET_DISK}${P}1" &>/dev/null
-    mkfs.ext4 -F "${TARGET_DISK}${P}2" &>/dev/null
-    spin_stop
-    msg "disk partitioned"
+    mkfs.fat -F32 "${TARGET_DISK}${P}1"
+    mkfs.ext4 -F "${TARGET_DISK}${P}2"
+    ok "partitioned"
 fi
 
-spin_start "mounting filesystems"
+step "Mounting"
 mount "${TARGET_DISK}${P}2" /mnt
 mkdir -p /mnt/boot/efi
 mount "${TARGET_DISK}${P}1" /mnt/boot/efi
-spin_stop
-msg "mounted"
+ok "mounted"
 
 INSTALL_NIX=false
 if [[ "$nix_choice" == "1" ]]; then
@@ -399,20 +433,19 @@ if [[ "$nix_choice" == "1" ]]; then
     mkdir -p /mnt/var/empty
 fi
 
-spin_start "installing base system (this takes a while)"
+step "Installing Base System  ($KERNEL_PKG + $KERNEL_HEADERS)"
 pacstrap /mnt base "$KERNEL_PKG" "$KERNEL_HEADERS" linux-firmware \
-    sudo fastfetch plymouth $NET_PKG base-devel dosfstools git &>/dev/null
-spin_stop
-msg "base system installed"
+    sudo fastfetch plymouth $NET_PKG base-devel dosfstools git dkms
 
-# advanced kernel build
+ok "base installed"
+
+# advanced kernel
 if [[ "$ADVANCED_KERNEL" == "true" ]]; then
-    msg "setting up kernel build environment..."
+    step "Kernel Source Build"
     arch-chroot /mnt bash <<KCONF
         pacman -S --noconfirm asp base-devel
         mkdir -p /root/kernelbuild && cd /root/kernelbuild
-        asp export linux
-        cd linux
+        asp export linux && cd linux
         zcat /proc/config.gz > .config 2>/dev/null || \
             cp /usr/lib/modules/\$(uname -r)/build/.config .config 2>/dev/null || \
             make defconfig
@@ -422,8 +455,8 @@ if [[ "$ADVANCED_KERNEL" == "true" ]]; then
             3) pacman -S --noconfirm vim; vim .config ;;
             4) pacman -S --noconfirm nano; nano .config ;;
         esac
-        read -rp "build and install kernel now? [Y/n]: " build_yn
-        if [[ ! "\$build_yn" =~ ^[Nn]$ ]]; then
+        read -rp "Build and install kernel now? [Y/n]: " b
+        if [[ ! "\$b" =~ ^[Nn]$ ]]; then
             make -j\$(nproc)
             make modules_install
             make install
@@ -431,21 +464,20 @@ if [[ "$ADVANCED_KERNEL" == "true" ]]; then
 KCONF
 fi
 
-# copy zerene branding
-spin_start "copying zerene assets"
+step "Copying Zerene Assets"
 mkdir -p /mnt/etc/fastfetch
 [ -d /etc/fastfetch ] && cp -r /etc/fastfetch/* /mnt/etc/fastfetch/
 mkdir -p /mnt/usr/share/pixmaps
 cp /usr/share/pixmaps/zerene.svg /mnt/usr/share/pixmaps/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
-spin_stop
+ok "assets copied"
 
 # --------------------------------------------------------
 # chroot
 # --------------------------------------------------------
 
-msg "entering chroot..."
+step "Entering Chroot"
 
 arch-chroot /mnt bash <<EOF
 
@@ -466,12 +498,14 @@ NAME="Zerene OS"
 PRETTY_NAME="Zerene OS (Xenovia 1)"
 ID=zerene
 ID_LIKE=arch
-ANSI_COLOR="38;2;255;50;150"
+ANSI_COLOR="38;2;5;4;216"
 LOGO=zerene
 OS
-echo "GRUB_DISTRIBUTOR=\"Zerene OS\"" >> /etc/default/grub
+echo 'GRUB_DISTRIBUTOR="Zerene OS"' >> /etc/default/grub
 
-# users
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Users & Groups  ──\033[0m"
+echo ""
 groupadd -r -g 970 nixbld 2>/dev/null || true
 groupadd -r nix-users 2>/dev/null || true
 for n in \$(seq -w 01 10); do
@@ -481,17 +515,16 @@ useradd -m -G wheel,video,audio,storage,nix-users -s /bin/bash "$username" 2>/de
 echo "$username:$password" | chpasswd
 echo "root:$password" | chpasswd
 
-if [ ! -f /etc/sudoers ]; then
-    touch /etc/sudoers
-    chmod 440 /etc/sudoers
-fi
-if ! grep -q "^%wheel" /etc/sudoers; then
-    echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers
-fi
+if [ ! -f /etc/sudoers ]; then touch /etc/sudoers; chmod 440 /etc/sudoers; fi
+if ! grep -q "^%wheel" /etc/sudoers; then echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers; fi
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
+echo "  > users configured"
 
 # nix
 if [[ "$INSTALL_NIX" == "true" ]]; then
+    echo ""
+    echo -e "\033[38;2;5;4;216m  ──  Nix  ──\033[0m"
+    echo ""
     pacman -S --noconfirm nix
     mkdir -p /nix/{store,var/nix/db,var/nix/profiles,var/nix/channel-cache}
     chown -R root:nixbld /nix/store
@@ -514,7 +547,7 @@ NIXRC
     nix-channel --update
 fi
 
-# fastfetch config
+# fastfetch
 mkdir -p /home/$username/.config/fastfetch
 cat > /home/$username/.config/fastfetch/config.jsonc <<FF
 {
@@ -525,39 +558,44 @@ FF
 echo "fastfetch" >> /home/$username/.bashrc
 chown -R $username:$username /home/$username
 
-# audio
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Audio  ──\033[0m"
+echo ""
 if [ "$audio_choice" == "1" ]; then
     pacman -S --noconfirm pipewire pipewire-pulse wireplumber
 else
     pacman -S --noconfirm pulseaudio
 fi
 
-# gpu drivers
-# headers already installed via pacstrap so dkms can build immediately
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  GPU Drivers  ──\033[0m"
+echo ""
 case "$gpu_choice" in
     1)
-        # nvidia modern - turing/rtx 20xx and newer (gtx 1650+)
-        # install nvidia-dkms, utils and settings
+        # nvidia modern - rtx/turing/4060 etc
+        # install nvidia-dkms, utils, settings
         pacman -S --noconfirm nvidia-dkms nvidia-utils nvidia-settings \
             lib32-nvidia-utils libglvnd lib32-libglvnd opencl-nvidia
 
-        # run dkms to build the module for the installed kernel
+        # dkms builds the module for the installed kernel
+        echo "  > running dkms autoinstall..."
         dkms autoinstall
 
-        # rebuild initramfs so it loads the nvidia modules properly
-        mkinitcpio -P
-
-        # add nvidia modules to initramfs
+        # add nvidia modules to initramfs before rebuild
         sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
 
-        # remove kms hook - conflicts with nvidia early loading and causes black screens
+        # kms hook conflicts with nvidia early loading - causes black screen on wayland
         sed -i 's/ kms//' /etc/mkinitcpio.conf
 
-        # blacklist nouveau so it doesnt load before nvidia on boot
+        # rebuild initramfs with the nvidia modules in it
+        echo "  > rebuilding initramfs..."
+        mkinitcpio -P
+
+        # blacklist nouveau so it cant load and fight nvidia
         echo "blacklist nouveau" > /etc/modprobe.d/blacklist-nouveau.conf
         echo "options nouveau modeset=0" >> /etc/modprobe.d/blacklist-nouveau.conf
 
-        # pacman hook - rebuilds initramfs automatically when nvidia-dkms updates
+        # pacman hook - auto rebuilds initramfs whenever nvidia-dkms updates
         mkdir -p /etc/pacman.d/hooks
         cat > /etc/pacman.d/hooks/nvidia.hook <<NVHOOK
 [Trigger]
@@ -574,31 +612,28 @@ Exec=/usr/bin/mkinitcpio -P
 NVHOOK
         ;;
     2)
-        # nvidia legacy - pascal gtx 10xx and older, dropped from main driver 590
+        # nvidia legacy - pascal gtx 10xx and older, aur only since driver 590
         pacman -S --noconfirm git base-devel
-        (
-            cd /tmp
-            git clone https://aur.archlinux.org/nvidia-580xx-dkms.git
-            chown -R "$username:$username" nvidia-580xx-dkms
-            cd nvidia-580xx-dkms
-            sudo -u "$username" makepkg -si --noconfirm
-        )
+        cd /tmp
+        git clone https://aur.archlinux.org/nvidia-580xx-dkms.git
+        chown -R "$username:$username" /tmp/nvidia-580xx-dkms
+        cd /tmp/nvidia-580xx-dkms
+        sudo -u "$username" makepkg -si --noconfirm
+        cd /
         pacman -S --noconfirm nvidia-utils lib32-nvidia-utils libglvnd lib32-libglvnd
         dkms autoinstall
-        mkinitcpio -P
         sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
         sed -i 's/ kms//' /etc/mkinitcpio.conf
+        mkinitcpio -P
         echo "blacklist nouveau" > /etc/modprobe.d/blacklist-nouveau.conf
         echo "options nouveau modeset=0" >> /etc/modprobe.d/blacklist-nouveau.conf
         ;;
     3)
-        # amd - mesa handles everything, vulkan-radeon for vulkan
         pacman -S --noconfirm mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon \
             xf86-video-amdgpu libva-mesa-driver lib32-libva-mesa-driver \
             vulkan-icd-loader lib32-vulkan-icd-loader
         ;;
     4)
-        # intel - mesa + vulkan-intel, intel-media-driver for video decode
         pacman -S --noconfirm mesa lib32-mesa vulkan-intel lib32-vulkan-intel \
             intel-media-driver libva-utils vulkan-icd-loader lib32-vulkan-icd-loader
         ;;
@@ -607,7 +642,9 @@ NVHOOK
         ;;
 esac
 
-# network
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Network  ──\033[0m"
+echo ""
 case "$net_choice" in
     1) systemctl enable NetworkManager ;;
     2)
@@ -624,43 +661,33 @@ IWDCONF
         ;;
 esac
 
-# desktop
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Desktop  ──\033[0m"
+echo ""
 case $desktop_choice in
-    1)  pacman -S --noconfirm hyprland kitty greetd greetd-tuigreet
-        systemctl enable greetd ;;
-    2)  pacman -S --noconfirm plasma-desktop sddm konsole dolphin plasma-wayland-session
-        systemctl enable sddm ;;
-    3)  pacman -S --noconfirm xfce4 xfce4-goodies gvfs lightdm lightdm-gtk-greeter xfce4-terminal
-        systemctl enable lightdm ;;
-    4)  pacman -S --noconfirm gnome gnome-tweaks gdm
-        systemctl enable gdm ;;
-    5)  pacman -S --noconfirm sway swaybar swaybg swaylock foot greetd greetd-tuigreet
-        systemctl enable greetd ;;
-    6)  pacman -S --noconfirm i3-wm i3status i3lock dmenu rxvt-unicode lightdm lightdm-gtk-greeter
-        systemctl enable lightdm ;;
-    7)  pacman -S --noconfirm cinnamon lightdm lightdm-gtk-greeter gnome-terminal
-        systemctl enable lightdm ;;
-    8)  pacman -S --noconfirm mate mate-extra lightdm lightdm-gtk-greeter mate-terminal
-        systemctl enable lightdm ;;
-    9)  pacman -S --noconfirm lxqt sddm breeze-icons qterminal
-        systemctl enable sddm ;;
-    10) pacman -S --noconfirm budgie-desktop lightdm lightdm-gtk-greeter gnome-terminal
-        systemctl enable lightdm ;;
-    11) pacman -S --noconfirm deepin deepin-extra lightdm lightdm-gtk-greeter
-        systemctl enable lightdm ;;
-    12) pacman -S --noconfirm openbox obconf lxappearance lightdm lightdm-gtk-greeter rxvt-unicode
-        systemctl enable lightdm ;;
-    13) pacman -S --noconfirm bspwm sxhkd dmenu lightdm lightdm-gtk-greeter rxvt-unicode
-        systemctl enable lightdm ;;
-    14) pacman -S --noconfirm qtile python-psutil lightdm lightdm-gtk-greeter alacritty
-        systemctl enable lightdm ;;
-    15) pacman -S --noconfirm cosmic-session
-        systemctl enable cosmic-greeter ;;
+    1)  pacman -S --noconfirm hyprland kitty greetd greetd-tuigreet; systemctl enable greetd ;;
+    2)  pacman -S --noconfirm plasma-desktop sddm konsole dolphin plasma-wayland-session; systemctl enable sddm ;;
+    3)  pacman -S --noconfirm xfce4 xfce4-goodies gvfs lightdm lightdm-gtk-greeter xfce4-terminal; systemctl enable lightdm ;;
+    4)  pacman -S --noconfirm gnome gnome-tweaks gdm; systemctl enable gdm ;;
+    5)  pacman -S --noconfirm sway swaybar swaybg swaylock foot greetd greetd-tuigreet; systemctl enable greetd ;;
+    6)  pacman -S --noconfirm i3-wm i3status i3lock dmenu rxvt-unicode lightdm lightdm-gtk-greeter; systemctl enable lightdm ;;
+    7)  pacman -S --noconfirm cinnamon lightdm lightdm-gtk-greeter gnome-terminal; systemctl enable lightdm ;;
+    8)  pacman -S --noconfirm mate mate-extra lightdm lightdm-gtk-greeter mate-terminal; systemctl enable lightdm ;;
+    9)  pacman -S --noconfirm lxqt sddm breeze-icons qterminal; systemctl enable sddm ;;
+    10) pacman -S --noconfirm budgie-desktop lightdm lightdm-gtk-greeter gnome-terminal; systemctl enable lightdm ;;
+    11) pacman -S --noconfirm deepin deepin-extra lightdm lightdm-gtk-greeter; systemctl enable lightdm ;;
+    12) pacman -S --noconfirm openbox obconf lxappearance lightdm lightdm-gtk-greeter rxvt-unicode; systemctl enable lightdm ;;
+    13) pacman -S --noconfirm bspwm sxhkd dmenu lightdm lightdm-gtk-greeter rxvt-unicode; systemctl enable lightdm ;;
+    14) pacman -S --noconfirm qtile python-psutil lightdm lightdm-gtk-greeter alacritty; systemctl enable lightdm ;;
+    15) pacman -S --noconfirm cosmic-session; systemctl enable cosmic-greeter ;;
 esac
 
-# aur helper - clone from github, build as user not root
-case $aur_helper in
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  AUR Helper  ──\033[0m"
+echo ""
+case "$aur_helper" in
     1)
+        # install deps first, then clone yay and build as the actual user
         pacman -S --needed --noconfirm base-devel git
         cd /tmp
         git clone https://github.com/Jguer/yay.git
@@ -671,7 +698,7 @@ case $aur_helper in
         rm -rf /tmp/yay
         ;;
     2)
-        pacman -S --needed --noconfirm base-devel git
+        pacman -S --needed --noconfirm base-devel git rust
         cd /tmp
         git clone https://github.com/Morganamilo/paru.git
         chown -R "$username:$username" /tmp/paru
@@ -682,23 +709,16 @@ case $aur_helper in
         ;;
 esac
 
-# --------------------------------------------------------
-# kernel tuning
-# --------------------------------------------------------
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Kernel Tuning  ──\033[0m"
+echo ""
 
 GRUB_EXTRAS="quiet splash audit=0"
-
-if [[ "$gpu_choice" == "1" || "$gpu_choice" == "2" ]]; then
-    GRUB_EXTRAS="\$GRUB_EXTRAS nvidia_drm.modeset=1"
-fi
-
-if [[ "$AUTO_TUNE" == "true" ]]; then
-    GRUB_EXTRAS="\$GRUB_EXTRAS $KERN_PARAMS"
-fi
+[[ "$gpu_choice" == "1" || "$gpu_choice" == "2" ]] && GRUB_EXTRAS="\$GRUB_EXTRAS nvidia_drm.modeset=1"
+[[ "$AUTO_TUNE" == "true" ]] && GRUB_EXTRAS="\$GRUB_EXTRAS $KERN_PARAMS"
 
 sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_EXTRAS |" /etc/default/grub
 
-# sysctl tweaks
 mkdir -p /etc/sysctl.d
 cat > /etc/sysctl.d/99-zerene.conf <<SYSCTL
 vm.swappiness = $SWAPPINESS
@@ -713,21 +733,16 @@ net.ipv4.tcp_tw_reuse = 1
 fs.inotify.max_user_watches = 524288
 SYSCTL
 
-# io scheduler udev rule
 mkdir -p /etc/udev/rules.d
 echo '$IO_SCHED_RULE' > /etc/udev/rules.d/60-io-scheduler.rules
 
-# cpu governor
 mkdir -p /etc/tmpfiles.d
 if [[ "$IS_LAPTOP" == "true" ]]; then
-    echo "w /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor - - - - powersave" \
-        > /etc/tmpfiles.d/cpu-governor.conf
+    echo "w /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor - - - - powersave" > /etc/tmpfiles.d/cpu-governor.conf
 else
-    echo "w /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor - - - - schedutil" \
-        > /etc/tmpfiles.d/cpu-governor.conf
+    echo "w /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor - - - - schedutil" > /etc/tmpfiles.d/cpu-governor.conf
 fi
 
-# zram
 pacman -S --noconfirm zram-generator
 cat > /etc/systemd/zram-generator.conf <<ZRAM
 [zram0]
@@ -735,7 +750,6 @@ zram-size = ${RAM_HALF}M
 compression-algorithm = zstd
 ZRAM
 
-# tuning summary file
 cat > /etc/zerene-tune.txt <<TUNE
 zerene auto tuning - applied at install
 
@@ -749,13 +763,17 @@ kernel:     $KERNEL_PKG
 headers:    $KERNEL_HEADERS
 auto-tune:  $AUTO_TUNE
 
-grub extras: \$GRUB_EXTRAS
-swappiness:  $SWAPPINESS
-io sched:    $DISK_TYPE optimized
-zram:        ${RAM_HALF}mb zstd
+grub:       \$GRUB_EXTRAS
+swappiness: $SWAPPINESS
+io sched:   $DISK_TYPE optimized
+zram:       ${RAM_HALF}mb zstd
 TUNE
 
-# initramfs and bootloader
+echo "  > sysctl, zram, governor configured"
+
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Bootloader  ──\033[0m"
+echo ""
 sed -i 's/^MODULES=(/MODULES=(vboxvideo /' /etc/mkinitcpio.conf
 sed -i 's/HOOKS=(base udev/HOOKS=(base udev plymouth/' /etc/mkinitcpio.conf
 mkinitcpio -P
@@ -768,23 +786,25 @@ cp /boot/efi/EFI/Zerene/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI
 
 grub-mkconfig -o /boot/grub/grub.cfg
 
+echo "  > bootloader installed"
+
 EOF
 
-spin_start "unmounting filesystems"
+step "Unmounting"
 umount -R /mnt 2>/dev/null || true
-spin_stop
+ok "done"
 
-# done screen
-clear
+# --------------------------------------------------------
+# finish screen
+# --------------------------------------------------------
+
 echo
-echo -e "${PINK}"
-cat << 'DONE'
-  ╔══════════════════════════════════════╗
-  ║      zerene os installed!            ║
-  ║                                      ║
-  ║  tuning info: /etc/zerene-tune.txt   ║
-  ║  you can reboot now                  ║
-  ╚══════════════════════════════════════╝
-DONE
-echo -e "${RESET}"
+rule
+echo
+echo -e "${BLUE}${BOLD}    zerene os installed successfully${RESET}"
+echo
+echo -e "${GRAY}    tuning report  →  /etc/zerene-tune.txt${RESET}"
+echo -e "${GRAY}    you can now reboot${RESET}"
+echo
+rule
 echo
