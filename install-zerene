@@ -15,7 +15,7 @@ RESET='\033[0m'
 
 # draw a horizontal rule
 rule() { echo -e "${BLUE}$(printf '─%.0s' $(seq 1 60))${RESET}"; }
-0
+
 # section header like archinstall but zerene style
 header() {
     echo
@@ -179,6 +179,15 @@ fi
 spin_stop
 
 ok "hardware scanned: ${CPU_MODEL_NAME} · ${CPU_CORES} cores · ${RAM_MB}MB RAM"
+
+# autodetect boot mode - uefi or legacy bios
+if [ -d /sys/firmware/efi/efivars ]; then
+    BOOT_MODE="uefi"
+    ok "boot mode: UEFI detected"
+else
+    BOOT_MODE="legacy"
+    ok "boot mode: Legacy BIOS detected"
+fi
 echo
 
 # --------------------------------------------------------
@@ -224,6 +233,24 @@ fi
 tui_yesno "Format Disk" "Wipe and format $TARGET_DISK ?\n\nThis will erase ALL data on this disk." \
     && FORMAT_DISK=true || FORMAT_DISK=false
 
+header "Filesystem"
+
+fs_choice=$(tui_menu "Filesystem Format" "Select the filesystem for your root partition:" \
+    "1" "ext4        - stable, widely supported  (we recommend this one to whoever is new to linux)" \
+    "2" "btrfs       - snapshots, compression, subvolumes" \
+    "3" "xfs         - high performance, great for large files" \
+    "4" "f2fs        - optimized for SSDs and flash storage" \
+    "5" "bcachefs    - modern, copy-on-write with checksums") || err "cancelled"
+
+case "$fs_choice" in
+    1) FS_TYPE="ext4" ;;
+    2) FS_TYPE="btrfs" ;;
+    3) FS_TYPE="xfs" ;;
+    4) FS_TYPE="f2fs" ;;
+    5) FS_TYPE="bcachefs" ;;
+    *) FS_TYPE="ext4" ;;
+esac
+
 header "Nix Package Manager"
 
 nix_choice=$(tui_menu "Nix" "Include Nix package manager?" \
@@ -238,8 +265,9 @@ kernel_choice=$(tui_menu "Kernel" "$KERN_PROMPT" \
     "1" "linux          - stable, default arch kernel" \
     "2" "linux-zen      - lower latency, better for gaming/desktop" \
     "3" "linux-hardened - security hardened" \
-    "4" "auto-tune      - zerene picks best kernel + tunes for your hw" \
-    "5" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled"
+    "4" "linux-lts      - long term support, older but very stable" \
+    "5" "auto-tune      - zerene picks best kernel + tunes for your hw" \
+    "6" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled"
 
 KERNEL_PKG="linux"
 KERNEL_HEADERS="linux-headers"
@@ -251,7 +279,8 @@ case "$kernel_choice" in
     1) KERNEL_PKG="linux";          KERNEL_HEADERS="linux-headers" ;;
     2) KERNEL_PKG="linux-zen";      KERNEL_HEADERS="linux-zen-headers" ;;
     3) KERNEL_PKG="linux-hardened"; KERNEL_HEADERS="linux-hardened-headers" ;;
-    4)
+    4) KERNEL_PKG="linux-lts";      KERNEL_HEADERS="linux-lts-headers" ;;
+    5)
         AUTO_TUNE=true
         if   [[ "$IS_VM" == "true" ]]; then
             KERNEL_PKG="linux";     KERNEL_HEADERS="linux-headers"
@@ -274,7 +303,7 @@ case "$kernel_choice" in
         [[ "$IS_LAPTOP" == "true" ]] && KERN_PARAMS="$KERN_PARAMS pcie_aspm=force nmi_watchdog=0"
         [[ "$RAM_MB" -lt 4096 ]] && SWAPPINESS=30 || SWAPPINESS=10
         ;;
-    5)
+    6)
         ADVANCED_KERNEL=true
         KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
         kconfig_method=$(tui_menu "Kernel Config" "Choose your config method:" \
@@ -362,6 +391,11 @@ case $net_choice in 1) NN="NetworkManager" ;; 2) NN="iwd" ;; esac
 case $nix_choice in 1) NIXN="yes" ;; *) NIXN="no" ;; esac
 case $audio_choice in 1) AUDN="Pipewire" ;; 2) AUDN="Pulseaudio" ;; esac
 
+header "Additional Packages"
+
+EXTRA_PKGS=$(tui_input "Additional Packages" \
+    "Enter any extra packages to install before setup (space-separated).\nLeave blank to skip.\n\nExample: vim neovim htop wget curl firefox" "") || err "cancelled"
+
 # --------------------------------------------------------
 # confirm summary
 # --------------------------------------------------------
@@ -370,6 +404,8 @@ SUM="
   Hostname   $hostname
   User       $username
   Disk       $TARGET_DISK   (format: $FORMAT_DISK)
+  Filesystem $FS_TYPE
+  Boot Mode  $BOOT_MODE
 
   Kernel     $KERNEL_PKG
   Headers    $KERNEL_HEADERS
@@ -382,6 +418,8 @@ SUM="
   GPU        $GN
   Network    $NN
   Nix        $NIXN
+
+  Extra Pkgs ${EXTRA_PKGS:-none}
 
 Press Enter to begin installation, Esc to cancel."
 
@@ -398,31 +436,84 @@ echo
 rule
 
 if [[ "$FORMAT_DISK" == "true" ]]; then
-    step "Partitioning $TARGET_DISK (Btrfs Layout)"
+    step "Partitioning $TARGET_DISK ($FS_TYPE, $BOOT_MODE)"
     swapoff -a
-    parted -s "$TARGET_DISK" mklabel gpt
-    parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 513MiB
-    parted -s "$TARGET_DISK" set 1 esp on
-    parted -s "$TARGET_DISK" mkpart primary btrfs 513MiB 100%
-    
-    mkfs.fat -F32 "${TARGET_DISK}${P}1"
-    mkfs.btrfs -f -L "ZERENE_OS" "${TARGET_DISK}${P}2"
+
+    if [[ "$BOOT_MODE" == "uefi" ]]; then
+        # uefi - gpt partition table with esp
+        parted -s "$TARGET_DISK" mklabel gpt
+        parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 513MiB
+        parted -s "$TARGET_DISK" set 1 esp on
+        parted -s "$TARGET_DISK" mkpart primary 513MiB 100%
+        mkfs.fat -F32 "${TARGET_DISK}${P}1"
+    else
+        # legacy bios - msdos partition table with bios_grub partition
+        parted -s "$TARGET_DISK" mklabel msdos
+        parted -s "$TARGET_DISK" mkpart primary 1MiB 3MiB
+        parted -s "$TARGET_DISK" set 1 bios_grub on
+        parted -s "$TARGET_DISK" mkpart primary 3MiB 100%
+        parted -s "$TARGET_DISK" set 2 boot on
+    fi
+
+    # format root partition based on chosen filesystem
+    case "$FS_TYPE" in
+        ext4)
+            pacman -S --noconfirm e2fsprogs &>/dev/null || true
+            mkfs.ext4 -L "ZERENE_OS" "${TARGET_DISK}${P}2"
+            ;;
+        btrfs)
+            pacman -S --noconfirm btrfs-progs &>/dev/null || true
+            mkfs.btrfs -f -L "ZERENE_OS" "${TARGET_DISK}${P}2"
+            ;;
+        xfs)
+            pacman -S --noconfirm xfsprogs &>/dev/null || true
+            mkfs.xfs -f -L "ZERENE_OS" "${TARGET_DISK}${P}2"
+            ;;
+        f2fs)
+            pacman -S --noconfirm f2fs-tools &>/dev/null || true
+            mkfs.f2fs -f -l "ZERENE_OS" "${TARGET_DISK}${P}2"
+            ;;
+        bcachefs)
+            pacman -S --noconfirm bcachefs-tools &>/dev/null || true
+            bcachefs format -L "ZERENE_OS" "${TARGET_DISK}${P}2"
+            ;;
+    esac
 fi
 
-step "Creating Subvolumes"
-mount "${TARGET_DISK}${P}2" /mnt
-btrfs subvolume create /mnt/@
-btrfs subvolume create /mnt/@home
-btrfs subvolume create /mnt/@snapshots
-umount /mnt
+# mount based on filesystem type
+if [[ "$FS_TYPE" == "btrfs" ]]; then
+    step "Creating Btrfs Subvolumes"
+    mount "${TARGET_DISK}${P}2" /mnt
+    btrfs subvolume create /mnt/@
+    btrfs subvolume create /mnt/@home
+    btrfs subvolume create /mnt/@snapshots
+    umount /mnt
 
-step "Mounting Subvolumes"
-# Mount with zstd compression to help that HDD speed
-mount -o noatime,compress=zstd,subvol=@ "${TARGET_DISK}${P}2" /mnt
-mkdir -p /mnt/{boot/efi,home,.snapshots}
-mount -o noatime,compress=zstd,subvol=@home "${TARGET_DISK}${P}2" /mnt/home
-mount -o noatime,compress=zstd,subvol=@snapshots "${TARGET_DISK}${P}2" /mnt/.snapshots
-mount "${TARGET_DISK}${P}1" /mnt/boot/efi
+    step "Mounting Btrfs Subvolumes"
+    # Mount with zstd compression to help that HDD speed
+    mount -o noatime,compress=zstd,subvol=@ "${TARGET_DISK}${P}2" /mnt
+    if [[ "$BOOT_MODE" == "uefi" ]]; then
+        mkdir -p /mnt/{boot/efi,home,.snapshots}
+    else
+        mkdir -p /mnt/{boot,home,.snapshots}
+    fi
+    mount -o noatime,compress=zstd,subvol=@home "${TARGET_DISK}${P}2" /mnt/home
+    mount -o noatime,compress=zstd,subvol=@snapshots "${TARGET_DISK}${P}2" /mnt/.snapshots
+else
+    step "Mounting $FS_TYPE Partition"
+    mount "${TARGET_DISK}${P}2" /mnt
+    if [[ "$BOOT_MODE" == "uefi" ]]; then
+        mkdir -p /mnt/boot/efi
+    else
+        mkdir -p /mnt/boot
+    fi
+    mkdir -p /mnt/home
+fi
+
+# mount boot partition
+if [[ "$BOOT_MODE" == "uefi" ]]; then
+    mount "${TARGET_DISK}${P}1" /mnt/boot/efi
+fi
 
 
 INSTALL_NIX=false
@@ -434,10 +525,16 @@ if [[ "$nix_choice" == "1" ]]; then
 fi
 
 step "Installing Base System + Generation Tools"
-# Added btrfs-progs and grub-btrfs
+# Added btrfs-progs and grub-btrfs for btrfs, xfsprogs for xfs, etc.
+FS_TOOLS=""
+[[ "$FS_TYPE" == "btrfs" ]]    && FS_TOOLS="btrfs-progs grub-btrfs inotify-tools"
+[[ "$FS_TYPE" == "xfs" ]]      && FS_TOOLS="xfsprogs"
+[[ "$FS_TYPE" == "f2fs" ]]     && FS_TOOLS="f2fs-tools"
+[[ "$FS_TYPE" == "bcachefs" ]] && FS_TOOLS="bcachefs-tools"
+
 pacstrap /mnt base "$KERNEL_PKG" "$KERNEL_HEADERS" linux-firmware \
     sudo fastfetch plymouth $NET_PKG base-devel git dkms \
-    btrfs-progs grub-btrfs inotify-tools
+    $FS_TOOLS $EXTRA_PKGS
 
 # Generate FSTAB (Crucial for Btrfs subvolumes)
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -770,6 +867,8 @@ vm:         $IS_VM
 kernel:     $KERNEL_PKG
 headers:    $KERNEL_HEADERS
 auto-tune:  $AUTO_TUNE
+filesystem: $FS_TYPE
+boot mode:  $BOOT_MODE
 
 grub:       \$GRUB_EXTRAS
 swappiness: $SWAPPINESS
@@ -783,16 +882,24 @@ echo ""
 echo -e "\033[38;2;5;4;216m  ──  Generation Engine Setup  ──\033[0m"
 echo ""
 
-# enable Btrfs quota for better management
-btrfs quota enable / 2>/dev/null || true
+# enable Btrfs quota for better management (btrfs only)
+if [[ "$FS_TYPE" == "btrfs" ]]; then
+    btrfs quota enable / 2>/dev/null || true
+fi
 
 # create the script inside the chroot path
 cat > /usr/local/bin/zerene-snap <<'SNAP'
 #!/bin/bash
-#!/bin/bash
 # Zerene OS Generation Manager
 GEN_DIR="/.snapshots"
 MAX_GENS=5
+
+# check if running on btrfs - generation snapshots require btrfs
+FS_ROOT=$(df -T / | awk 'NR==2{print $2}')
+if [[ "$FS_ROOT" != "btrfs" ]]; then
+    echo -e "\033[0;31m  !\033[0m Generation snapshots require btrfs. Current fs: $FS_ROOT"
+    exit 1
+fi
 
 # ensure GEN_DIR exists and is a btrfs subvolume/directory
 if [ ! -d "$GEN_DIR" ]; then
@@ -849,19 +956,27 @@ echo ""
 echo -e "\033[38;2;5;4;216m  ──  Bootloader & Snapshots  ──\033[0m"
 echo ""
 
-# Ensure the grub-btrfs service is enabled to auto-update the menu when snapshots are deleted/added
-systemctl enable grub-btrfsd
+# only enable grub-btrfs daemon when using btrfs - it auto-updates grub menu on snapshot changes
+if [[ "$FS_TYPE" == "btrfs" ]]; then
+    systemctl enable grub-btrfsd
+fi
 
 sed -i 's/^MODULES=(/MODULES=(vboxvideo /' /etc/mkinitcpio.conf
 sed -i 's/HOOKS=(base udev/HOOKS=(base udev plymouth/' /etc/mkinitcpio.conf
 
 mkinitcpio -P
 
-pacman -S --noconfirm grub efibootmgr
-grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Zerene --recheck
-
-mkdir -p /boot/efi/EFI/BOOT
-cp /boot/efi/EFI/Zerene/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI
+if [[ "$BOOT_MODE" == "uefi" ]]; then
+    # uefi install - efi grub with fallback bootx64.efi
+    pacman -S --noconfirm grub efibootmgr
+    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Zerene --recheck
+    mkdir -p /boot/efi/EFI/BOOT
+    cp /boot/efi/EFI/Zerene/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI
+else
+    # legacy bios install - grub to mbr
+    pacman -S --noconfirm grub
+    grub-install --target=i386-pc --recheck "$TARGET_DISK"
+fi
 
 grub-mkconfig -o /boot/grub/grub.cfg
 
@@ -882,6 +997,7 @@ rule
 echo
 echo -e "${BLUE}${BOLD}    zerene os installed successfully${RESET}"
 echo
+echo -e "${GRAY}    filesystem: $FS_TYPE  ·  boot: $BOOT_MODE${RESET}"
 echo -e "${GRAY}    tuning report  →  /etc/zerene-tune.txt${RESET}"
 echo -e "${GRAY}    you can now reboot${RESET}"
 echo
