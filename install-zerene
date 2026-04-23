@@ -370,6 +370,66 @@ net_choice=$(tui_menu "Network Manager" "Select network manager:" \
 NET_PKG="networkmanager"
 [[ "$net_choice" == "2" ]] && NET_PKG="iwd dhcpcd"
 
+header "Swap & ZRAM"
+
+# show detected ram so the user knows what they're working with
+swap_choice=$(tui_menu "Swap & ZRAM" "Detected RAM: ${RAM_MB}MB\n\nSelect a memory configuration:" \
+    "1" "ZRAM only      - compressed ram swap, no disk swap (recommended)" \
+    "2" "Swapfile only  - traditional file-based swap on disk" \
+    "3" "ZRAM + Swap    - both zram and a swapfile (best for low ram)" \
+    "4" "None           - skip swap entirely") || err "cancelled"
+
+# only ask about hibernation if they picked something with a swapfile
+# hibernation requires a real swapfile on disk - zram alone cant do it
+HIBERNATION=false
+SWAP_SIZE_MB=0
+ZRAM_SIZE_MB=0
+
+if [[ "$swap_choice" == "1" || "$swap_choice" == "3" ]]; then
+    # zram size: half ram for normal, full ram for hibernation capable
+    if tui_yesno "Hibernation" "Do you want to enable hibernation support?\n\nDetected RAM: ${RAM_MB}MB\n\n  Yes → swapfile = ${RAM_MB}MB  (full ram, needed for hibernation)\n  No  → zram = $(( RAM_MB / 2 ))MB  (half ram, lighter on disk)"; then
+        HIBERNATION=true
+        ZRAM_SIZE_MB=$RAM_MB
+    else
+        HIBERNATION=false
+        ZRAM_SIZE_MB=$(( RAM_MB / 2 ))
+    fi
+fi
+
+if [[ "$swap_choice" == "2" || "$swap_choice" == "3" ]]; then
+    # swapfile is always full ram size so hibernation can work if ever enabled
+    if tui_yesno "Hibernation" "Do you want to enable hibernation support?\n\nDetected RAM: ${RAM_MB}MB\n\n  Yes → swapfile = ${RAM_MB}MB  (full ram, required for hibernate)\n  No  → swapfile = $(( RAM_MB / 2 ))MB  (half ram is enough for most uses)"; then
+        HIBERNATION=true
+        SWAP_SIZE_MB=$RAM_MB
+    else
+        HIBERNATION=false
+        SWAP_SIZE_MB=$(( RAM_MB / 2 ))
+    fi
+    # if zram+swap combo, zram is always half regardless
+    [[ "$swap_choice" == "3" && "$ZRAM_SIZE_MB" -eq 0 ]] && ZRAM_SIZE_MB=$(( RAM_MB / 2 ))
+fi
+
+# readable swap summary for confirm screen
+case "$swap_choice" in
+    1) SWAPN="zram ${ZRAM_SIZE_MB}MB zstd" ;;
+    2) SWAPN="swapfile ${SWAP_SIZE_MB}MB" ;;
+    3) SWAPN="zram ${ZRAM_SIZE_MB}MB + swapfile ${SWAP_SIZE_MB}MB" ;;
+    4) SWAPN="none" ;;
+esac
+[[ "$HIBERNATION" == "true" ]] && SWAPN="$SWAPN  (hibernation enabled)"
+
+# tune swappiness based on what swap the user chose
+# no swap = 0 (kernel never tries to swap), zram only = 100 (zram is fast, swap aggressively),
+# swapfile = 10 (slow disk, avoid swapping), zram+swap = 60 (middle ground)
+case "$swap_choice" in
+    1) SWAPPINESS=100 ;;   # zram only - fast compressed ram, swap freely
+    2) SWAPPINESS=10 ;;    # swapfile on disk - slow, avoid unless necessary
+    3) SWAPPINESS=60 ;;    # zram + swapfile - balanced
+    4) SWAPPINESS=0 ;;     # no swap - never swap
+esac
+# override if low ram on a non-zram config - needs to swap more willingly
+[[ "$RAM_MB" -lt 4096 && "$swap_choice" == "2" ]] && SWAPPINESS=30
+
 # --------------------------------------------------------
 # readable names for summary
 # --------------------------------------------------------
@@ -418,6 +478,7 @@ SUM="
   GPU        $GN
   Network    $NN
   Nix        $NIXN
+  Swap       $SWAPN
 
   Extra Pkgs ${EXTRA_PKGS:-none}
 
@@ -849,11 +910,48 @@ else
 fi
 
 pacman -S --noconfirm zram-generator
-cat > /etc/systemd/zram-generator.conf <<ZRAM
+
+# zram - only configured when user picked zram only or zram+swap
+if [[ "$swap_choice" == "1" || "$swap_choice" == "3" ]]; then
+    cat > /etc/systemd/zram-generator.conf <<ZRAM
 [zram0]
-zram-size = ${RAM_HALF}M
+zram-size = ${ZRAM_SIZE_MB}M
 compression-algorithm = zstd
 ZRAM
+    echo "  > zram configured: ${ZRAM_SIZE_MB}MB zstd"
+fi
+
+# swapfile - only created when user picked swapfile or zram+swap
+if [[ "$swap_choice" == "2" || "$swap_choice" == "3" ]]; then
+    # create swapfile at the correct size
+    echo "  > creating ${SWAP_SIZE_MB}MB swapfile..."
+    dd if=/dev/zero of=/swapfile bs=1M count=${SWAP_SIZE_MB} status=progress
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    # add swapfile to fstab so it persists on reboot
+    echo "/swapfile none swap defaults 0 0" >> /etc/fstab
+    echo "  > swapfile created and added to fstab"
+fi
+
+# hibernation - needs resume kernel param pointing at swap uuid or swapfile offset
+if [[ "$HIBERNATION" == "true" && ("$swap_choice" == "2" || "$swap_choice" == "3") ]]; then
+    # get the uuid of the root partition for resume= param
+    SWAP_UUID=\$(findmnt -no UUID /swapfile 2>/dev/null || blkid -s UUID -o value "${TARGET_DISK}${P}2")
+    # get the physical offset of the swapfile for resume_offset=
+    SWAP_OFFSET=\$(filefrag -v /swapfile 2>/dev/null | awk '/^ *0:/{print \$4}' | tr -d '.')
+    # append resume params to grub so kernel knows where to find swap on wake
+    sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"resume=UUID=\${SWAP_UUID} resume_offset=\${SWAP_OFFSET} |" /etc/default/grub
+    # add resume hook to initramfs so it can restore state on boot
+    sed -i 's/HOOKS=(.*filesystems/& resume/' /etc/mkinitcpio.conf
+    mkinitcpio -P
+    echo "  > hibernation configured (resume=UUID=\${SWAP_UUID} offset=\${SWAP_OFFSET})"
+elif [[ "$HIBERNATION" == "true" && "$swap_choice" == "1" ]]; then
+    # zram-only hibernation path - uses systemd-hibernate-resume with zram
+    # note: zram hibernation requires kernel 6.1+ and CONFIG_HIBERNATION_ZRAM
+    echo "  > zram hibernation requested - enabling systemd hibernate target"
+    systemctl enable systemd-hibernate.target 2>/dev/null || true
+fi
 
 cat > /etc/zerene-tune.txt <<TUNE
 zerene auto tuning - applied at install
@@ -873,7 +971,8 @@ boot mode:  $BOOT_MODE
 grub:       \$GRUB_EXTRAS
 swappiness: $SWAPPINESS
 io sched:   $DISK_TYPE optimized
-zram:       ${RAM_HALF}mb zstd
+swap:       $SWAPN
+hibernation: $HIBERNATION
 TUNE
 
 echo "  > sysctl, zram, governor configured"
