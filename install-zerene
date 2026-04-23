@@ -514,37 +514,51 @@ echo "  > users configured"
 
 # nix
 if [[ "$INSTALL_NIX" == "true" ]]; then
-    echo ""
-    echo -e "\033[38;2;5;4;216m  ──  Nix  ──\033[0m"
-    echo ""
     pacman -S --noconfirm nix
     mkdir -p /nix/{store,var/nix/db,var/nix/profiles,var/nix/channel-cache}
     chown -R root:nixbld /nix/store
     chmod 1775 /nix/store
     chown -R root:nixbld /nix/var/nix
     chmod -R ug+rwX /nix/var/nix
+    
     mkdir -p /etc/nix
     cat > /etc/nix/nix.conf <<NIX
-experimental-features = nix-command flakes
+experimental-features = nix-command 
 max-jobs = auto
 build-users-group = nixbld
+# CRITICAL: Disable sandboxing for the chroot install phase
+sandbox = false
 NIX
+    
     systemctl enable nix-daemon
-    cat >> /etc/profile <<NIXRC
-if [ -e '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh' ]; then
-  source '/nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh'
-fi
-NIXRC
+    
+    # Exporting this prevents nix-channel from trying to talk to a daemon that isn't running yet
+    export NIX_REMOTE=""
     nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
-    nix-channel --update
+    nix-channel --update || echo "Channel update failed (expected in chroot), will finish on reboot."
 fi
 
 # fastfetch
 mkdir -p /home/$username/.config/fastfetch
 cat > /home/$username/.config/fastfetch/config.jsonc <<FF
 {
-  "logo": { "source": "/etc/fastfetch/zerene-ascii.txt", "type": "file" },
-  "modules": [ "title", "separator", "os", "host", "kernel", "uptime", "packages", "shell", "terminal", "cpu", "gpu", "memory", "break", "colors" ]
+  "logo": {
+    "source": "/etc/fastfetch/zerene-ascii.txt",
+    "color": { "1":"blue","2":"blue","3":"blue","4":"blue","5":"blue","6":"blue","7":"blue","8":"blue","9":"blue" }
+  },
+  "modules": [
+    { "type":"os","keyColor":"blue","valueColor":"blue" },
+    { "type":"kernel","keyColor":"blue","valueColor":"blue" },
+    { "type":"uptime","keyColor":"blue","valueColor":"blue" },
+    { "type":"memory","keyColor":"blue","valueColor":"blue" },
+    { "type":"cpu","keyColor":"blue","valueColor":"blue" },
+    { "type":"gpu","keyColor":"blue","valueColor":"blue" },
+    { "type":"shell","keyColor":"blue","valueColor":"blue" },
+    { "type":"wm","keyColor":"blue","valueColor":"blue" },
+    { "type":"de","keyColor":"blue","valueColor":"blue" },
+    { "type":"disk","keyColor":"blue","valueColor":"blue" },
+    { "type":"packages","keyColor":"blue","valueColor":"blue" }
+  ]
 }
 FF
 echo "fastfetch" >> /home/$username/.bashrc
@@ -677,27 +691,18 @@ esac
 echo ""
 echo -e "\033[38;2;5;4;216m  ──  AUR Helper  ──\033[0m"
 echo ""
-case "$aur_helper" in
-    1)
-        # install deps first, then clone yay and build as the actual user
-        pacman -S --needed --noconfirm base-devel git
+case $aur_helper in
+    1|2)
+        helper=\$([[ "$aur_helper" == "1" ]] && echo "yay" || echo "paru")
+        msg "Building \$helper..."
+        pacman -S --noconfirm --needed git base-devel
         cd /tmp
-        git clone https://github.com/Jguer/yay.git
-        chown -R "$username:$username" /tmp/yay
-        cd /tmp/yay
-        sudo -u "$username" makepkg -si --noconfirm
+        # We clone and build as the actual user
+        sudo -u "$username" git clone "https://aur.archlinux.org/\$helper.git"
+        cd "\$helper"
+        # --nocheck speeds up the build on your WDC HDD
+        sudo -u "$username" makepkg -si --noconfirm --nocheck
         cd /
-        rm -rf /tmp/yay
-        ;;
-    2)
-        pacman -S --needed --noconfirm base-devel git rust
-        cd /tmp
-        git clone https://github.com/Morganamilo/paru.git
-        chown -R "$username:$username" /tmp/paru
-        cd /tmp/paru
-        sudo -u "$username" makepkg -si --noconfirm
-        cd /
-        rm -rf /tmp/paru
         ;;
 esac
 
