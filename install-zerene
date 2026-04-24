@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# zerene os installer - xenovia 1 - TEST VERSION
+# zerene os installer - xenovia 2 - TEST VERSION
 # This is a test version for development/testing purposes
 
 
@@ -289,19 +289,11 @@ fi
 header "Filesystem"
 
 fs_choice=$(tui_menu "Filesystem Format" "Select the filesystem for your root partition:" \
-    "1" "ext4        - stable, widely supported  (we recommend this one to whoever is new to linux)" \
-    "2" "btrfs       - snapshots, compression, subvolumes" \
-    "3" "xfs         - high performance, great for large files" \
-    "4" "f2fs        - optimized for SSDs and flash storage" \
-    "5" "bcachefs    - modern, copy-on-write with checksums") || err "cancelled"
+    "1" "btrfs       - snapshots, compression, subvolumes") || err "cancelled"
 
 case "$fs_choice" in
-    1) FS_TYPE="ext4" ;;
-    2) FS_TYPE="btrfs" ;;
-    3) FS_TYPE="xfs" ;;
-    4) FS_TYPE="f2fs" ;;
-    5) FS_TYPE="bcachefs" ;;
-    *) FS_TYPE="ext4" ;;
+    1) FS_TYPE="btrfs" ;;
+    *) FS_TYPE="btrfs" ;;
 esac
 
 header "Nix Package Manager"
@@ -678,6 +670,17 @@ esac
 # override if low ram on a non-zram config - needs to swap more willingly
 [[ "$RAM_MB" -lt 4096 && "$swap_choice" == "2" ]] && SWAPPINESS=30
 
+header "Subspaces"
+
+subspace_menu=$(tui_menu "Linux Subspaces" "Optional: Install Debian workspace alongside zerene" \
+    "1" "Debian      - Debian stable workspace" \
+    "2" "None           - skip subspaces") || err "cancelled"
+
+case "$subspace_menu" in
+    1) INSTALL_DEBIAN=true ;;
+    2) INSTALL_DEBIAN=false ;;
+esac
+
 # --------------------------------------------------------
 # readable names for summary
 # --------------------------------------------------------
@@ -704,6 +707,11 @@ esac
 case $net_choice in 1) NN="NetworkManager" ;; 2) NN="iwd" ;; esac
 case $nix_choice in 1) NIXN="yes" ;; *) NIXN="no" ;; esac
 case $audio_choice in 1) AUDN="Pipewire" ;; 2) AUDN="Pulseaudio" ;; esac
+
+header "Susbpaces / subsystems"
+
+
+
 
 header "Additional Packages"
 
@@ -735,6 +743,7 @@ SUM="
   Network    $NN
   Nix        $NIXN
   Swap       $SWAPN
+  Subspace   $([ "$INSTALL_DEBIAN" == "true" ] && echo "Debian" || echo "none")
 
   Extra Pkgs ${EXTRA_PKGS:-none}
 
@@ -968,13 +977,13 @@ XKEYBOARD
 
 cat > /etc/os-release <<OS
 NAME="Zerene OS"
-PRETTY_NAME="Zerene OS (Xenovia 1 - TEST)"
+PRETTY_NAME="Zerene OS (Xenovia 2 - TEST BUILD)"
 ID=zerene
 ID_LIKE=arch
 ANSI_COLOR="38;2;5;4;216"
 LOGO=zerene
 OS
-echo 'GRUB_DISTRIBUTOR="Zerene OS TEST"' >> /etc/default/grub
+echo 'GRUB_DISTRIBUTOR="Zerene OS TEST BUILD"' >> /etc/default/grub
 
 echo ""
 echo -e "\033[38;2;5;4;216m  ──  Users & Groups  ──\033[0m"
@@ -1421,33 +1430,38 @@ fi
 cat > /usr/local/bin/zerene-snap <<'SNAP'
 #!/bin/bash
 # Zerene OS Generation Manager
-GEN_DIR="/.snapshots"
-MAX_GENS=5
 
-# check if running on btrfs - generation snapshots require btrfs
 FS_ROOT=$(df -T / | awk 'NR==2{print $2}')
 if [[ "$FS_ROOT" != "btrfs" ]]; then
     echo -e "\033[0;31m  !\033[0m Generation snapshots require btrfs. Current fs: $FS_ROOT"
     exit 1
 fi
 
-# ensure GEN_DIR exists and is a btrfs subvolume/directory
+SUBV_PATH=$(btrfs subvolume show / 2>/dev/null | awk '/^Path:/ {print $2}')
+if [[ "$SUBV_PATH" =~ ^gen_ ]]; then
+    echo -e "\033[0;33m  !\033[0m Running from gen snapshot, accessing @snapshots store..."
+    DEVICE=$(df / | awk 'NR==2{print $1}')
+    mkdir -p /mnt/snapstore
+    mount -o subvol=@snapshots "$DEVICE" /mnt/snapstore
+    GEN_DIR="/mnt/snapstore/.snapshots"
+else
+    GEN_DIR="/.snapshots"
+fi
+
+MAX_GENS=5
+
 if [ ! -d "$GEN_DIR" ]; then
     sudo mkdir -p "$GEN_DIR"
 fi
 
 echo -e "\033[0;32m  ›\033[0m Creating Zerene Generation..."
 
-# improved counting: find highest gen_X number and add 1
 LAST_NUM=$(ls "$GEN_DIR" | grep -oP 'gen_\K\d+' | sort -rn | head -n 1)
 NEXT_GEN=$(( ${LAST_NUM:-0} + 1 ))
-
 TARGET="$GEN_DIR/gen_$NEXT_GEN"
 
-# Create the snapshot
 btrfs subvolume snapshot / "$TARGET"
 
-# cleanup logic
 CURRENT_GENS=$(ls -d "$GEN_DIR"/gen_* 2>/dev/null | wc -l)
 if [ "$CURRENT_GENS" -gt "$MAX_GENS" ]; then
     OLDEST=$(ls -d "$GEN_DIR"/gen_* | sort -V | head -n 1)
@@ -1455,13 +1469,12 @@ if [ "$CURRENT_GENS" -gt "$MAX_GENS" ]; then
     btrfs subvolume delete "$OLDEST"
 fi
 
-# update GRUB
 grub-mkconfig -o /boot/grub/grub.cfg
 SNAP
 
 chmod +x /usr/local/bin/zerene-snap
 
-# setup the Pacman Hook
+# setup the Pacman Hook for generation system
 mkdir -p /etc/pacman.d/hooks
 cat > /etc/pacman.d/hooks/zerene-gen.hook <<'HOOK'
 [Trigger]
@@ -1481,6 +1494,50 @@ echo "alias gen-list='ls /.snapshots'" >> /home/$username/.bashrc
 echo "alias gen-save='/usr/local/bin/zerene-snap'" >> /home/$username/.bashrc
 
 echo "  > generation engine active"
+
+# subsystem configurations
+
+if [[ "$INSTALL_DEBIAN" == "true" ]]; then
+    header "Installing Debian Subspace"
+
+    step "Installing dependencies"
+    pacman -S --noconfirm debootstrap
+    pacman -S --noconfirm debian-archive-keyring
+
+    step "Bootstrap Debian stable"
+    mkdir -p /subspace/debian
+    debootstrap stable /subspace/debian http://deb.debian.org/debian/ || \
+    debootstrap --variant=minbase stable /subspace/debian http://deb.debian.org/debian/
+
+    if [ ! -d "/subspace/debian/usr" ]; then
+        echo "ERROR: Debian subspace installation failed"
+        echo "Please check debootstrap output above"
+        exit 1
+    fi
+
+    step "Cleaning apt cache"
+    rm -rf /subspace/debian/var/cache/apt/archives/*
+
+    step "Creating launcher script"
+    cat > /usr/local/bin/subspace-debian <<'DEBIAN'
+#!/bin/bash
+xhost +local: > /dev/null 2>&1
+if [ -n "$DISPLAY" ]; then
+    sudo systemd-nspawn -D /subspace/debian \
+        --bind-ro=/tmp/.X11-unix \
+        --bind=/dev/dri \
+        --setenv=DISPLAY=$DISPLAY \
+        /usr/bin/bash
+else
+    sudo systemd-nspawn -D /subspace/debian /usr/bin/bash
+fi
+DEBIAN
+    chmod +x /usr/local/bin/subspace-debian
+
+    echo "alias debian='sudo /usr/local/bin/subspace-debian'" >> /home/$username/.bashrc
+
+    echo "  > Debian subspace installed"
+fi
 
 echo ""
 echo -e "\033[38;2;5;4;216m  ──  Bootloader & Snapshots  ──\033[0m"
@@ -1521,7 +1578,7 @@ ok "done"
 # --------------------------------------------------------
 # finish screen
 # --------------------------------------------------------
-clear
+
 echo
 rule
 echo
