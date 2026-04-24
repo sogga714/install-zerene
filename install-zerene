@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# zerene os installer - xenovia 1
+# zerene os installer - xenovia 1 - TEST VERSION
+# This is a test version for development/testing purposes
 
 
 BLUE='\033[38;2;5;4;216m'       # #0504D8 zerene blue
@@ -115,6 +116,18 @@ tui_msg() {
     whiptail --title "  $1  " --msgbox "$2" 12 62
 }
 
+# tui_radiolist - styled radiolist for single selection
+tui_radiolist() {
+    local title="$1" prompt="$2"; shift 2
+    whiptail --title "  $title  " --radiolist "$prompt" 22 72 14 "$@" 3>&1 1>&2 2>&3
+}
+
+# tui_scrollbox - for displaying generated .config content
+tui_scrollbox() {
+    local title="$1" text="$2"
+    echo "$text" | whiptail --title "  $title  " --scrollbox 24 80 3>&1 1>&2 2>&3
+}
+
 # --------------------------------------------------------
 # splash
 # --------------------------------------------------------
@@ -123,15 +136,15 @@ clear
 echo
 echo -e "${BLUE}${BOLD}"
 cat << 'LOGO'
-    ███████╗███████╗██████╗ ███████╗███╗   ██╗███████╗
-    ╚══███╔╝██╔════╝██╔══██╗██╔════╝████╗  ██║██╔════╝
-      ███╔╝ █████╗  ██████╔╝█████╗  ██╔██╗ ██║█████╗
-     ███╔╝  ██╔══╝  ██╔══██╗██╔══╝  ██║╚██╗██║██╔══╝
-    ███████╗███████╗██║  ██║███████╗██║ ╚████║███████╗
-    ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝
+     ███████╗███████╗██████╗ ███████╗███╗   ██╗███████╗
+     ╚══███╔╝██╔════╝██╔══██╗██╔════╝████╗  ██║██╔════╝
+       ███╔╝ █████╗  ██████╔╝█████╗  ██╔██╗ ██║█████╗
+      ███╔╝  ██╔══╝  ██╔══██╗██╔══╝  ██║╚██╗██║██╔══╝
+     ███████╗███████╗██║  ██║███████╗██║ ╚████║███████╗
+     ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝
 LOGO
 echo -e "${RESET}"
-echo -e "${GRAY}                  xenovia 1  ·  installer${RESET}"
+echo -e "${GRAY}                  xenovia 1  ·  installer  ·  TEST${RESET}"
 echo
 rule
 echo
@@ -230,8 +243,48 @@ else
     IO_SCHED_RULE='ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"'
 fi
 
-tui_yesno "Format Disk" "Wipe and format $TARGET_DISK ?\n\nThis will erase ALL data on this disk." \
-    && FORMAT_DISK=true || FORMAT_DISK=false
+# get total disk size in GB for slider
+TOTAL_DISK_SIZE=$(lsblk -dno SIZE -b /dev/$DISK_ID | awk '{printf "%.0f", $1/1024/1024/1024}')
+FREE_DISK_SPACE=$TOTAL_DISK_SIZE
+
+# dual boot / disk split option with slider
+header "Disk Option"
+
+disk_option_choice=$(tui_radiolist "Disk Option" "Disk: ${TARGET_DISK} (${TOTAL_DISK_SIZE}GB)\nFree Space: ${FREE_DISK_SPACE}GB\n\nSelect installation method:" \
+    "1" "Format entire disk  - erase everything, single OS" ON \
+    "2" "Split disk       - dual boot with existing OS" OFF) || err "cancelled"
+
+case "$disk_option_choice" in
+    1)
+        FORMAT_DISK=true
+        SPLIT_DISK=false
+        SPLIT_PERCENT=100
+        ;;
+    2)
+        FORMAT_DISK=false
+        SPLIT_DISK=true
+        # slider for split percentage - show current value, default 50%
+        SPLIT_PERCENT=$(whiptail --title "  Disk Split  " --separate-output --radiolist "Disk: ${TARGET_DISK} (${TOTAL_DISK_SIZE}GB)\n\nSelect how much space to allocate to Zerene:\n(Touch Here ↓ to adjust)" 22 72 14 \
+            "25" "25%  (~$(( TOTAL_DISK_SIZE/4 ))GB) - minimal Zerene" OFF \
+            "30" "30%  (~$(( TOTAL_DISK_SIZE*3/10 ))GB)" OFF \
+            "40" "40%  (~$(( TOTAL_DISK_SIZE*2/5 ))GB)" OFF \
+            "50" "50%  (~$(( TOTAL_DISK_SIZE/2 ))GB) - equal split" ON \
+            "60" "60%  (~$(( TOTAL_DISK_SIZE*3/5 ))GB)" OFF \
+            "70" "70%  (~$(( TOTAL_DISK_SIZE*7/10 ))GB)" OFF \
+            "75" "75%  (~$(( TOTAL_DISK_SIZE*3/4 ))GB) - keep other OS" OFF \
+            3>&1 1>&2 2>&3) || err "cancelled"
+        # calculate actual partition sizes
+        ZERENE_SIZE_GB=$(( TOTAL_DISK_SIZE * SPLIT_PERCENT / 100 ))
+        OTHER_SIZE_GB=$(( TOTAL_DISK_SIZE - ZERENE_SIZE_GB ))
+        FREE_DISK_SPACE=$OTHER_SIZE_GB
+        ;;
+esac
+
+# quick format confirmation for non-split
+if [[ "$FORMAT_DISK" == "true" ]]; then
+    tui_yesno "Format Disk" "Wipe and format $TARGET_DISK ?\n\nThis will erase ALL data on this disk." \
+        && FORMAT_DISK=true || FORMAT_DISK=false
+fi
 
 header "Filesystem"
 
@@ -267,13 +320,16 @@ kernel_choice=$(tui_menu "Kernel" "$KERN_PROMPT" \
     "3" "linux-hardened - security hardened" \
     "4" "linux-lts      - long term support, older but very stable" \
     "5" "auto-tune      - zerene picks best kernel + tunes for your hw" \
-    "6" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled"
+    "6" "auto-config   - generate .config based on your specs" \
+    "7" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled"
 
 KERNEL_PKG="linux"
 KERNEL_HEADERS="linux-headers"
 ADVANCED_KERNEL=false
 AUTO_TUNE=false
+AUTO_CONFIG=false
 KERN_PARAMS=""
+AUTO_CONFIG_CONTENT=""
 
 case "$kernel_choice" in
     1) KERNEL_PKG="linux";          KERNEL_HEADERS="linux-headers" ;;
@@ -304,6 +360,182 @@ case "$kernel_choice" in
         [[ "$RAM_MB" -lt 4096 ]] && SWAPPINESS=30 || SWAPPINESS=10
         ;;
     6)
+        # auto-config - generate .config based on detected hardware
+        AUTO_CONFIG=true
+        KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
+        
+        # generate .config content based on hardware detection
+        AUTO_CONFIG_CONTENT="#
+# Zerene auto-generated kernel config based on your hardware (TEST)
+# Generated for: $CPU_MODEL_NAME
+# RAM: ${RAM_MB}MB | Cores: $CPU_CORES | Disk: $DISK_TYPE
+#
+
+# Processor type and features
+CONFIG_64BIT=y
+CONFIG_X86_64=y
+CONFIG_X86=y
+CONFIG_MICROCODE=y
+CONFIG_MICROCODE_AMD=y
+CONFIG_MICROCODE_INTEL=y
+"
+
+        # CPU vendor specific
+        if [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
+            AUTO_CONFIG_CONTENT+="
+# AMD CPU
+CONFIG_AMD=y
+CONFIG_AMD_CPUID=y
+CONFIG_AMD_NB=y
+"
+            if [[ "$CPU_FAMILY" -ge 25 ]]; then
+                AUTO_CONFIG_CONTENT+="CONFIG_AMD_PSTATE=y
+CONFIG_ACPI_CPPC=y
+"
+            fi
+        elif [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
+            AUTO_CONFIG_CONTENT+="
+# Intel CPU
+CONFIG_INTEL=y
+CONFIG_INTEL_TDX=y
+"
+        fi
+
+        # RAM size based config
+        if [[ "$RAM_MB" -gt 16384 ]]; then
+            AUTO_CONFIG_CONTENT+="
+# Large RAM config (>$RAM_MB MB > 16GB)
+CONFIG_NUMA=y
+CONFIG_KMEMCG=y
+CONFIG_MEMCG=y
+CONFIG_BLK_CGROUP_IOPOL=y
+"
+        fi
+        if [[ "$RAM_MB" -lt 4096 ]]; then
+            AUTO_CONFIG_CONTENT+="
+# Low RAM config (<4GB) - enable zswap for better performance
+CONFIG_ZSWAP=y
+CONFIG_ZPOOL=y
+"
+        fi
+
+        # Disk/storage type
+        if [[ "$DISK_TYPE" == "ssd" || "$DISK_TYPE" == "nvme" ]]; then
+            AUTO_CONFIG_CONTENT+="
+# SSD/NVMe optimizations
+CONFIG_BLK_DEV_NVME=y
+CONFIG_NVME_CORE=y
+CONFIG_NVME_MULTIPATH=y
+CONFIG_MQ_DEADLINE=y
+"
+        else
+            AUTO_CONFIG_CONTENT+="
+# HDD optimizations
+CONFIG_BFQ_CGROUP_DEBUG=y
+CONFIG_BFQ_GROUP_IOSCHED=y
+"
+        fi
+
+        # Laptop vs desktop
+        if [[ "$IS_LAPTOP" == "true" ]]; then
+            AUTO_CONFIG_CONTENT+="
+# Laptop config
+CONFIG_ACPI=y
+CONFIG_ACPI_BATTERY=y
+CONFIG_ACPI_THERMAL=y
+CONFIG_PM_OPP=y
+CONFIG_CPU_FREQ_TIMED=y
+CONFIG_IKCONFIG_PROC=y
+"
+        else
+            AUTO_CONFIG_CONTENT+="
+# Desktop config
+CONFIG_HZ_1000=y
+CONFIG_NO_HZ=y
+CONFIG_NO_HZ_IDLE=y
+"
+        fi
+
+        # Virtual machine detection
+        if [[ "$IS_VM" == "true" ]]; then
+            AUTO_CONFIG_CONTENT+="
+# Virtual machine guest
+CONFIG_PARAVIRT=y
+CONFIG_KVM_GUEST=y
+CONFIG_VIRT_DRIVERS=y
+"
+        fi
+
+        # Compression for btrfs/snapshots
+        AUTO_CONFIG_CONTENT+="
+# Compression and snapshots
+CONFIG_BTRFS_FS=y
+CONFIG_BTRFS_FS_RUN_SANITY_TESTS=n
+CONFIG_ZSTD=y
+CONFIG_LZO=y
+CONFIG_LZ4=y
+CONFIG_CRYPTO_ZSTD=y
+"
+
+        # Common configs
+        AUTO_CONFIG_CONTENT+="
+# Common features
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_INET_UDP_TUNNEL=y
+CONFIG_IPV6=y
+CONFIG_BRIDGE=y
+CONFIG_BONDING=y
+CONFIG_TUN=y
+CONFIG_VIRTIO_NET=y
+CONFIG_VIRTIO_BLK=y
+
+# Filesystems
+CONFIG_EXT4_FS=y
+CONFIG_F2FS_FS=y
+CONFIG_XFS_FS=y
+CONFIG_VFAT_FS=y
+
+# GPU - video for graphics
+CONFIG_MODULES=y
+CONFIG_DRM=y
+CONFIG_DRM_AMDGPU=y
+CONFIG_DRM_I915=y
+CONFIG_DRM_NOUVEAU=y
+
+# Audio
+CONFIG_SND=y
+CONFIG_SND_HDA_INTEL=y
+CONFIG_SND_HDA_CODEC_REALTEK=y
+CONFIG_SND_USB_AUDIO=y
+
+# CPU idle and frequency
+CONFIG_CPU_IDLE=y
+CONFIG_CPU_FREQ=y
+CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
+
+# Memory management
+CONFIG_MMU=y
+CONFIG_GUP=y
+CONFIG_KSM=y
+
+# Security
+CONFIG_SECCOMP=y
+CONFIG_SECCOMP_FILTER=y
+CONFIG_CC_STACKPROTECTOR=y
+CONFIG_IKCONFIG=y
+
+# Networking security
+CONFIG_NETFILTER=y
+CONFIG_NF_CONNTRACK=y
+CONFIG_NETFILTER_XT_MATCH_STATE=y
+
+# Performance tuning
+CONFIG_PREEMPT=y
+CONFIG_PREEMPT_VOLUNTARY=y
+"
+        ;;
+    7)
         ADVANCED_KERNEL=true
         KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
         kconfig_method=$(tui_menu "Kernel Config" "Choose your config method:" \
@@ -357,7 +589,9 @@ desktop_choice=$(tui_menu "Desktop Environment" "Select your desktop environment
     "27" "LXDE          lightest full de, gtk2" \
     "28" "Pantheon      elementary os desktop" \
     "29" "Plasma Mobile kde mobile shell" \
-    "30" "None          no desktop") || err "cancelled"
+    "30" "Xorg only     - minimal X without desktop" \
+    "31" "Server        - no GPU, headless optimized" \
+    "32" "None          no desktop") || err "cancelled"
 
 header "AUR Helper"
 
@@ -455,10 +689,11 @@ case $desktop_choice in
     10) DN="Budgie" ;;        11) DN="Deepin" ;;          12) DN="Openbox" ;;
     13) DN="bspwm" ;;         14) DN="Qtile" ;;           15) DN="COSMIC" ;;
     16) DN="WindowMaker" ;;   17) DN="Fluxbox" ;;         18) DN="IceWM" ;;
-    19) DN="Enlightenment" ;; 20) DN="Niri" ;;            21) DN="River" ;;
+    19) DN="Enlightenment" ;;  20) DN="Niri" ;;            21) DN="River" ;;
     22) DN="Wayfire" ;;       23) DN="Herbstluftwm" ;;    24) DN="dwm" ;;
     25) DN="awesome" ;;       26) DN="spectrwm" ;;        27) DN="LXDE" ;;
     28) DN="Pantheon" ;;      29) DN="Plasma Mobile" ;;
+    30) DN="Xorg only" ;;    31) DN="Server" ;;
     *) DN="None" ;;
 esac
 case $aur_helper in 1) AN="yay" ;; 2) AN="paru" ;; *) AN="none" ;; esac
@@ -482,13 +717,15 @@ EXTRA_PKGS=$(tui_input "Additional Packages" \
 SUM="
   Hostname   $hostname
   User       $username
-  Disk       $TARGET_DISK   (format: $FORMAT_DISK)
+  Disk       $TARGET_DISK
+  Disk Opt   $([ "$FORMAT_DISK" == "true" ] && echo "format entire disk" || echo "split ${SPLIT_PERCENT}%")
   Filesystem $FS_TYPE
   Boot Mode  $BOOT_MODE
 
   Kernel     $KERNEL_PKG
   Headers    $KERNEL_HEADERS
   Auto-tune  $AUTO_TUNE
+  Auto-cfg   $AUTO_CONFIG
 
   Layout     $LAYOUT
   Audio      $AUDN
@@ -511,11 +748,11 @@ tui_yesno "Confirm Installation" "$SUM" || err "cancelled"
 
 # partitioning
 clear
-echo -e "${BLUE}${BOLD}    zerene os  ·  installing...${RESET}"
+echo -e "${BLUE}${BOLD}    zerene os  ·  installing...  ·  TEST${RESET}"
 echo
 rule
 
-if [[ "$FORMAT_DISK" == "true" ]]; then
+if [[ "$FORMAT_DISK" == "true" || "$SPLIT_DISK" == "true" ]]; then
     step "Partitioning $TARGET_DISK ($FS_TYPE, $BOOT_MODE)"
     swapoff -a
 
@@ -524,14 +761,28 @@ if [[ "$FORMAT_DISK" == "true" ]]; then
         parted -s "$TARGET_DISK" mklabel gpt
         parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 513MiB
         parted -s "$TARGET_DISK" set 1 esp on
-        parted -s "$TARGET_DISK" mkpart primary 513MiB 100%
+        
+        if [[ "$SPLIT_DISK" == "true" ]]; then
+            # split disk - create partition for zerene based on percentage
+            parted -s "$TARGET_DISK" mkpart primary ${ZERENE_SIZE_GB}MiB ${ZERENE_SIZE_GB}MiB
+        else
+            # full disk
+            parted -s "$TARGET_DISK" mkpart primary 513MiB 100%
+        fi
         mkfs.fat -F32 "${TARGET_DISK}${P}1"
     else
         # legacy bios - msdos partition table with bios_grub partition
         parted -s "$TARGET_DISK" mklabel msdos
         parted -s "$TARGET_DISK" mkpart primary 1MiB 3MiB
         parted -s "$TARGET_DISK" set 1 bios_grub on
-        parted -s "$TARGET_DISK" mkpart primary 3MiB 100%
+        
+        if [[ "$SPLIT_DISK" == "true" ]]; then
+            # split disk
+            parted -s "$TARGET_DISK" mkpart primary 3MiB ${ZERENE_SIZE_GB}MiB
+        else
+            # full disk
+            parted -s "$TARGET_DISK" mkpart primary 3MiB 100%
+        fi
         parted -s "$TARGET_DISK" set 2 boot on
     fi
 
@@ -619,7 +870,7 @@ pacstrap /mnt base "$KERNEL_PKG" "$KERNEL_HEADERS" linux-firmware \
 # Generate FSTAB (Crucial for Btrfs subvolumes)
 genfstab -U /mnt >> /mnt/etc/fstab
 
-# advanced kernel
+# advanced kernel or auto-config
 if [[ "$ADVANCED_KERNEL" == "true" ]]; then
     step "Kernel Source Build"
     arch-chroot /mnt bash <<KCONF
@@ -642,6 +893,48 @@ if [[ "$ADVANCED_KERNEL" == "true" ]]; then
             make install
         fi
 KCONF
+elif [[ "$AUTO_CONFIG" == "true" ]]; then
+    # write the generated .config to a file for review and optional editing
+    step "Applying Auto-generated Kernel Config"
+    
+    # write config to temp location in chroot
+    echo "$AUTO_CONFIG_CONTENT" > /mnt/root/zerene-kernel-config.txt
+    
+    # show it in a scrollbox so user can review
+    tui_scrollbox "Kernel Config" "$AUTO_CONFIG_CONTENT"
+    
+    # ask if they want to use it, edit it, or go with defaults
+    config_action=$(tui_menu "Kernel Config" "Your auto-generated .config has been created.\nWhat would you like to do?" \
+        "1" "Use as-is    - install with this config" \
+        "2" "Edit config  - modify before building" \
+        "3" "Use default  - use arch's default config") || err "cancelled"
+    
+    case "$config_action" in
+        1)
+            # use auto-config - apply it during kernel build
+            ARCH_KCONF='yes' | chroot /mnt bash -c 'mkdir -p /root/kernelbuild && cd /root/kernelbuild && asp export linux && cd linux'
+            echo "$AUTO_CONFIG_CONTENT" > /mnt/root/linux/.config
+            msg "Auto-config applied"
+            ;;
+        2)
+            # edit config
+            arch-chroot /mnt bash <<KEDIT
+                pacman -S --noconfirm nano
+                mkdir -p /root/kernelbuild && cd /root/kernelbuild
+                asp export linux && cd linux
+                zcat /proc/config.gz > .config 2>/dev/null || make defconfig
+                nano .config
+                read -rp "Save and build kernel now? [Y/n]: " b
+                if [[ ! "\$b" =~ ^[Nn]$ ]]; then
+                    make -j\$(nproc) && make modules_install && make install
+                fi
+KEDIT
+            ;;
+        3)
+            # use default - just install package normally
+            msg "Using default kernel config"
+            ;;
+    esac
 fi
 
 step "Copying Zerene Assets"
@@ -675,13 +968,13 @@ XKEYBOARD
 
 cat > /etc/os-release <<OS
 NAME="Zerene OS"
-PRETTY_NAME="Zerene OS (Xenovia 1)"
+PRETTY_NAME="Zerene OS (Xenovia 1 - TEST)"
 ID=zerene
 ID_LIKE=arch
 ANSI_COLOR="38;2;5;4;216"
 LOGO=zerene
 OS
-echo 'GRUB_DISTRIBUTOR="Zerene OS"' >> /etc/default/grub
+echo 'GRUB_DISTRIBUTOR="Zerene OS TEST"' >> /etc/default/grub
 
 echo ""
 echo -e "\033[38;2;5;4;216m  ──  Users & Groups  ──\033[0m"
@@ -954,6 +1247,43 @@ DWMDT
         # plasma mobile - kde mobile shell for touch devices and phones
         pacman -S --noconfirm plasma-mobile sddm
         systemctl enable sddm ;;
+    30)
+        # Xorg only - minimal X without a full desktop/window manager
+        pacman -S --noconfirm xorg-server xorg-xauth xorg-xinit xterm \
+            xf86-video-vesa xrdb xsetroot xclock
+        # minimal X session - just X with a terminal
+        cat > /home/$username/.xinitrc <<'XSESSION'
+#!/bin/sh
+xrdb -merge ~/.Xresources
+xsetroot -solid "#0504D8"
+xterm &
+exec xterm
+XSESSION
+        chmod +x /home/$username/.xinitrc
+        chown $username:$username /home/$username/.xinitrc
+        # minimal xsession desktop entry so login managers can start X
+        mkdir -p /usr/share/xsessions
+        cat > /usr/share/xsessions/xorg-only.desktop <<'XORGDT'
+[Desktop Entry]
+Name=Xorg Only
+Comment=Minimal X without desktop environment
+Exec=/home/$username/.xinitrc
+Type=Application
+XORGDT
+        # install lightdm as display manager so user can login to X
+        pacman -S --noconfirm lightdm lightdm-gtk-greeter
+        systemctl enable lightdm
+        echo "  > xorg-only installed (minimal X, no desktop)"
+        ;;
+    31)
+        # Server - headless, no GPU, optimized for server/workstation use
+        # No graphics packages - just the essentials
+        pacman -S --noconfirm openssh htop tmux wget curl rsync \
+            sudo vim polkit
+        systemctl enable sshd
+        # For server, we skip display manager entirely
+        echo "  > server configuration applied"
+        ;;
 esac
 
 echo ""
@@ -1053,7 +1383,7 @@ elif [[ "$HIBERNATION" == "true" && "$swap_choice" == "1" ]]; then
 fi
 
 cat > /etc/zerene-tune.txt <<TUNE
-zerene auto tuning - applied at install
+zerene auto tuning - applied at install (TEST VERSION)
 
 cpu:        $CPU_MODEL_NAME
 cores:      $CPU_CORES
@@ -1064,8 +1394,10 @@ vm:         $IS_VM
 kernel:     $KERNEL_PKG
 headers:    $KERNEL_HEADERS
 auto-tune:  $AUTO_TUNE
+auto-config: $AUTO_CONFIG
 filesystem: $FS_TYPE
 boot mode:  $BOOT_MODE
+disk opt:   $([ "$FORMAT_DISK" == "true" ] && echo "format" || echo "split ${SPLIT_PERCENT}%")
 
 grub:       \$GRUB_EXTRAS
 swappiness: $SWAPPINESS
@@ -1189,13 +1521,14 @@ ok "done"
 # --------------------------------------------------------
 # finish screen
 # --------------------------------------------------------
-clean
+clear
 echo
 rule
 echo
-echo -e "${BLUE}${BOLD}    zerene os installed successfully${RESET}"
+echo -e "${BLUE}${BOLD}    zerene os installed successfully  ·  TEST${RESET}"
 echo
 echo -e "${GRAY}    filesystem: $FS_TYPE  ·  boot: $BOOT_MODE${RESET}"
+echo -e "${GRAY}    disk option: $([ "$FORMAT_DISK" == "true" ] && echo "format entire disk" || echo "split ${SPLIT_PERCENT}%")${RESET}"
 echo -e "${GRAY}    tuning report  →  /etc/zerene-tune.txt${RESET}"
 echo -e "${GRAY}    you can now reboot${RESET}"
 echo
