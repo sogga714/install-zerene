@@ -688,7 +688,7 @@ INSTALL_DEBIAN=false
 INSTALL_ALPINE=false
 
 # Parse selections and set flags
-for choice in $subspace_selections; do
+for choice in $(echo "$subspace_selections" | tr -d '"'); do
     case "$choice" in
         debian) INSTALL_DEBIAN=true ;;
         alpine)  INSTALL_ALPINE=true ;;
