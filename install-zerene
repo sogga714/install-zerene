@@ -1417,42 +1417,150 @@ echo ""
 echo -e "\033[38;2;5;4;216m  ──  Subspaces  ──\033[0m"
 echo ""
 
-# Debian subspace
 if [[ "$INSTALL_DEBIAN" == "true" ]]; then
-    echo "  > installing Debian workspace..."
-    # Install debootstrap for Debian
-    pacman -S --noconfirm debootstrap 2>/dev/null || true
-    
-    # Create Debian subspace mount point
-    mkdir -p /var/lib/zerene/subspaces/debian
-    debootstrap stable /var/lib/zerene/subspaces/debian https://deb.debian.org/debian
-    
-    # Mount zerene's /home into Debian subspace for file sharing
-    mkdir -p /var/lib/zerene/subspaces/debian/home
-    mount --bind /home /var/lib/zerene/subspaces/debian/home
-    
-    echo "  > Debian subspace ready"
+    header "Installing Debian Subspace"
+
+    step "Installing dependencies"
+    pacman -S --noconfirm debootstrap
+    pacman -S --noconfirm debian-archive-keyring
+    pacman -S --noconfirm xorg-xhost
+
+    step "Bootstrap Debian stable"
+    mkdir -p /subspace/debian
+    debootstrap stable /subspace/debian http://deb.debian.org/debian/ || \
+    debootstrap --variant=minbase stable /subspace/debian http://deb.debian.org/debian/
+
+    if [ ! -d "/subspace/debian/usr" ]; then
+        echo "ERROR: Debian subspace installation failed"
+        echo "Please check debootstrap output above"
+        exit 1
+    fi
+
+    step "Cleaning apt cache"
+    rm -rf /subspace/debian/var/cache/apt/archives/*
+
+    step "Creating launcher script"
+    cat > /usr/local/bin/subspace-debian <<'DEBIAN'
+#!/bin/bash
+xhost +local: > /dev/null 2>&1
+if [ -n "\$DISPLAY" ]; then
+    sudo systemd-nspawn -D /subspace/debian \
+        --bind-ro=/tmp/.X11-unix \
+        --bind=/dev/dri \
+        --setenv=DISPLAY=\$DISPLAY \
+        /usr/bin/bash
+else
+    sudo systemd-nspawn -D /subspace/debian /usr/bin/bash
+fi
+DEBIAN
+    chmod +x /usr/local/bin/subspace-debian
+
+    echo "alias debian='sudo /usr/local/bin/subspace-debian'" >> /home/$username/.bashrc
+
+    echo "  > Debian subspace installed"
 fi
 
-# Alpine subspace
 if [[ "$INSTALL_ALPINE" == "true" ]]; then
-    echo "  > installing Alpine workspace..."
-    pacman -S --noconfirm alpine-keys 2>/dev/null || true
+    header "Installing Alpine Subspace"
+
+    step "Installing dependencies"
+    pacman -S --noconfirm tar curl xorg-xhost
+
+    step "Bootstrapping Alpine minirootfs"
+    # Create the subspace and the dedicated workspace
+    mkdir -p /subspace/alpine
+    mkdir -p /tempo/alpine-workspace
     
-    mkdir -p /var/lib/zerene/subspaces/alpine
-    alpine-setup-hostkeys 2>/dev/null || true
-    # Use alpine's bootstrap or apk for minimal install
-    # (Simplified - would need actual apk bootstrap process)
-    echo "  > Alpine subspace ready"
+    # Download: Save it with a specific filename inside your tempo path
+    curl -L "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.0-x86_64.tar.gz" \
+         -o /tempo/alpine-workspace/alpine.tar.gz
+    
+    # Extract: Point to that specific filename
+    tar -xf "/tempo/alpine-workspace/alpine.tar.gz" -C /subspace/alpine
+
+    # Clean up: Remove the workspace directory and everything inside it
+    rm -rf "/tempo"
+
+    # CRITICAL: Fix DNS so 'apk' works inside the subspace
+    cp /etc/resolv.conf /subspace/alpine/etc/resolv.conf
+
+    if [ ! -d "/subspace/alpine/usr" ]; then
+        echo "ERROR: Alpine subspace installation failed"
+        exit 1
+    fi
+
+    step "Creating launcher script"
+    cat > /usr/local/bin/subspace-alpine <<'ALPINE'
+#!/bin/bash
+xhost +local: > /dev/null 2>&1
+
+# not when the installer creates it.
+if [ -n "\$DISPLAY" ]; then
+    sudo systemd-nspawn -q -D /subspace/alpine \
+        --bind-ro=/etc/resolv.conf \
+        --bind-ro=/tmp/.X11-unix \
+        --bind=/dev/dri \
+        --setenv=DISPLAY=\$DISPLAY \
+        /bin/sh
+else
+    sudo systemd-nspawn -q -D /subspace/alpine /bin/sh
+fi
+ALPINE
+
+
+    chmod +x /usr/local/bin/subspace-alpine
+
+    echo "alias alpine='/usr/local/bin/subspace-alpine'" >> "/home/$username/.bashrc"
+
+    echo "  > Alpine subspace installed"
 fi
 
-# Gentoo subspace
 if [[ "$INSTALL_GENTOO" == "true" ]]; then
-    echo "  > installing Gentoo workspace..."
-    pacman -S --noconfirm archlinux2gentoo 2>/dev/null || true
-    # Would need stage3 bootstrap - placeholder
-    mkdir -p /var/lib/zerene/subspaces/gentoo
-    echo "  > Gentoo subspace ready"
+    header "Installing Gentoo Subspace"
+
+    step "Installing dependencies"
+    pacman -S --noconfirm tar curl xorg-xhost xz
+
+    step "Bootstrapping Gentoo"
+    sudo mkdir -p /subspace/gentoo
+    sudo mkdir -p /tempo/gentoo-workspace
+    
+    # Download
+    sudo curl -L "https://distfiles.gentoo.org/releases/amd64/autobuilds/current-stage3-amd64-desktop-openrc/stage3-amd64-desktop-openrc-20260419T164601Z.tar.xz" \
+         -o /tempo/gentoo-workspace/gentoo.tar.xz
+    
+    # Extract (Fixed the filename and the typo in /subspace/gentoo)
+    sudo tar -xpvf "/tempo/gentoo-workspace/gentoo.tar.xz" -C /subspace/gentoo --xattrs-include='*.*' --numeric-owner
+
+    # Clean up
+    sudo rm -rf "/tempo"
+
+    # CRITICAL: Fix DNS so 'emerge' works
+    sudo cp /etc/resolv.conf /subspace/gentoo/etc/resolv.conf
+
+    step "Creating launcher script"
+    cat > /usr/local/bin/subspace-gentoo <<'GENTOO'
+#!/bin/bash
+# 1. Allow GUI connections
+xhost +local: > /dev/null
+
+# 2. Launch the Gentoo Subspace
+if [ -n "\$DISPLAY" ]; then
+sudo systemd-nspawn -D /subspace/gentoo \
+    --bind-ro=/tmp/.X11-unix \
+    --bind=/dev/dri \
+    --bind=/dev/shm \
+    --capability=CAP_NET_ADMIN \
+    --setenv=DISPLAY=\$DISPLAY \
+    /bin/bash
+GENTOO
+
+
+    chmod +x /usr/local/bin/subspace-gentoo
+
+    echo "alias alpine='/usr/local/bin/subspace-gentoo'" >> "/home/$username/.bashrc"
+
+    echo "  > Gentoo subspace installed"
 fi
 
 if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" && "$INSTALL_GENTOO" == "false" ]]; then
