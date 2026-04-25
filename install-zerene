@@ -1642,7 +1642,7 @@ fi
 if [[ "$plymouth_choice" == "1" ]]; then
 echo "one last check mate..."
 
-plymouth-set-default-theme -R zerene-spinner
+plymouth-set-default-theme zerene-spinner  # FIX: removed -R flag — it triggers an internal initramfs rebuild that can fail and kill the whole script. mkinitcpio -P on the next line already handles the rebuild, so -R is redundant and dangerous here
 mkinitcpio -P
 fi
 
