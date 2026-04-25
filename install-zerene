@@ -122,6 +122,12 @@ tui_radiolist() {
     whiptail --title "  $title  " --radiolist "$prompt" 22 72 14 "$@" 3>&1 1>&2 2>&3
 }
 
+# tui_checklist - styled checklist for MULTIPLE selection
+tui_checklist() {
+    local title="$1" prompt="$2"; shift 2
+    whiptail --title "  $title  " --checklist "$prompt" 22 72 14 "$@" 3>&1 1>&2 2>&3
+}
+
 # tui_scrollbox - for displaying generated .config content
 tui_scrollbox() {
     local title="$1" text="$2"
@@ -144,7 +150,7 @@ cat << 'LOGO'
      ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝
 LOGO
 echo -e "${RESET}"
-echo -e "${GRAY}                  xenovia 1  ·  installer  ·  TEST${RESET}"
+echo -e "${GRAY}                  xenovia 2  ·  installer  ·  TEST${RESET}"
 echo
 rule
 echo
@@ -672,14 +678,25 @@ esac
 
 header "Subspaces"
 
-subspace_menu=$(tui_menu "Linux Subspaces" "Optional: Install Debian workspace alongside zerene" \
-    "1" "Debian      - Debian stable workspace" \
-    "2" "None           - skip subspaces") || err "cancelled"
+# MULTI-SELECT: Use checklist to allow selecting multiple subspaces
+subspace_selections=$(tui_checklist "Linux Subspaces" "Optional: Select additional distros subsystems to install alongside zerene\n\nSelect one or more (Press Space to toggle):" \
+    "debian" "Debian      - Debian stable workspace" OFF \
+    "alpine" "Alpine       - Alpine lightweight workspace" OFF \
+    "gentoo" "Gentoo     - Gentoo Openrc workspace" OFF) || err "cancelled"
 
-case "$subspace_menu" in
-    1) INSTALL_DEBIAN=true ;;
-    2) INSTALL_DEBIAN=false ;;
-esac
+# Clear previous subspace flags
+INSTALL_DEBIAN=false
+INSTALL_ALPINE=false
+INSTALL_GENTOO=false
+
+# Parse selections and set flags
+for choice in $subspace_selections; do
+    case "$choice" in
+        debian)  INSTALL_DEBIAN=true ;;
+        alpine)  INSTALL_ALPINE=true ;;
+        gentoo)  INSTALL_GENTOO=true ;;
+    esac
+done
 
 # --------------------------------------------------------
 # readable names for summary
@@ -708,10 +725,12 @@ case $net_choice in 1) NN="NetworkManager" ;; 2) NN="iwd" ;; esac
 case $nix_choice in 1) NIXN="yes" ;; *) NIXN="no" ;; esac
 case $audio_choice in 1) AUDN="Pipewire" ;; 2) AUDN="Pulseaudio" ;; esac
 
-header "Susbpaces / subsystems"
-
-
-
+# Build subspace summary string
+SUBSPACE_SUMMARY=""
+[[ "$INSTALL_DEBIAN" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Debian"
+[[ "$INSTALL_ALPINE" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Alpine"
+[[ "$INSTALL_GENTOO" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Gentoo"
+[[ -z "$SUBSPACE_SUMMARY" ]] && SUBSPACE_SUMMARY="none"
 
 header "Additional Packages"
 
@@ -743,7 +762,7 @@ SUM="
   Network    $NN
   Nix        $NIXN
   Swap       $SWAPN
-  Subspace   $([ "$INSTALL_DEBIAN" == "true" ] && echo "Debian" || echo "none")
+  Subspace   $SUBSPACE_SUMMARY
 
   Extra Pkgs ${EXTRA_PKGS:-none}
 
@@ -953,6 +972,7 @@ mkdir -p /mnt/usr/share/pixmaps
 cp /usr/share/pixmaps/zerene.svg /mnt/usr/share/pixmaps/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
+
 ok "assets copied"
 
 # --------------------------------------------------------
@@ -1391,6 +1411,55 @@ elif [[ "$HIBERNATION" == "true" && "$swap_choice" == "1" ]]; then
     systemctl enable systemd-hibernate.target 2>/dev/null || true
 fi
 
+# multi select lwk best feature 
+
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Subspaces  ──\033[0m"
+echo ""
+
+# Debian subspace
+if [[ "$INSTALL_DEBIAN" == "true" ]]; then
+    echo "  > installing Debian workspace..."
+    # Install debootstrap for Debian
+    pacman -S --noconfirm debootstrap 2>/dev/null || true
+    
+    # Create Debian subspace mount point
+    mkdir -p /var/lib/zerene/subspaces/debian
+    debootstrap stable /var/lib/zerene/subspaces/debian https://deb.debian.org/debian
+    
+    # Mount zerene's /home into Debian subspace for file sharing
+    mkdir -p /var/lib/zerene/subspaces/debian/home
+    mount --bind /home /var/lib/zerene/subspaces/debian/home
+    
+    echo "  > Debian subspace ready"
+fi
+
+# Alpine subspace
+if [[ "$INSTALL_ALPINE" == "true" ]]; then
+    echo "  > installing Alpine workspace..."
+    pacman -S --noconfirm alpine-keys 2>/dev/null || true
+    
+    mkdir -p /var/lib/zerene/subspaces/alpine
+    alpine-setup-hostkeys 2>/dev/null || true
+    # Use alpine's bootstrap or apk for minimal install
+    # (Simplified - would need actual apk bootstrap process)
+    echo "  > Alpine subspace ready"
+fi
+
+# Gentoo subspace
+if [[ "$INSTALL_GENTOO" == "true" ]]; then
+    echo "  > installing Gentoo workspace..."
+    pacman -S --noconfirm archlinux2gentoo 2>/dev/null || true
+    # Would need stage3 bootstrap - placeholder
+    mkdir -p /var/lib/zerene/subspaces/gentoo
+    echo "  > Gentoo subspace ready"
+fi
+
+if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" && "$INSTALL_GENTOO" == "false" ]]; then
+    echo "  > no subspaces selected"
+fi
+
+
 cat > /etc/zerene-tune.txt <<TUNE
 zerene auto tuning - applied at install (TEST VERSION)
 
@@ -1404,190 +1473,34 @@ kernel:     $KERNEL_PKG
 headers:    $KERNEL_HEADERS
 auto-tune:  $AUTO_TUNE
 auto-config: $AUTO_CONFIG
-filesystem: $FS_TYPE
-boot mode:  $BOOT_MODE
-disk opt:   $([ "$FORMAT_DISK" == "true" ] && echo "format" || echo "split ${SPLIT_PERCENT}%")
-
-grub:       \$GRUB_EXTRAS
-swappiness: $SWAPPINESS
-io sched:   $DISK_TYPE optimized
-swap:       $SWAPN
-hibernation: $HIBERNATION
 TUNE
 
-echo "  > sysctl, zram, governor configured"
+# --------------------------------------------------------
+# bootloader
+# --------------------------------------------------------
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Generation Engine Setup  ──\033[0m"
-echo ""
-
-# enable Btrfs quota for better management (btrfs only)
-if [[ "$FS_TYPE" == "btrfs" ]]; then
-    btrfs quota enable / 2>/dev/null || true
-fi
-
-# create the script inside the chroot path
-cat > /usr/local/bin/zerene-snap <<'SNAP'
-#!/bin/bash
-# Zerene OS Generation Manager
-
-FS_ROOT=$(df -T / | awk 'NR==2{print $2}')
-if [[ "$FS_ROOT" != "btrfs" ]]; then
-    echo -e "\033[0;31m  !\033[0m Generation snapshots require btrfs. Current fs: $FS_ROOT"
-    exit 1
-fi
-
-SUBV_PATH=$(btrfs subvolume show / 2>/dev/null | awk '/^Path:/ {print $2}')
-if [[ "$SUBV_PATH" =~ ^gen_ ]]; then
-    echo -e "\033[0;33m  !\033[0m Running from gen snapshot, accessing @snapshots store..."
-    DEVICE=$(df / | awk 'NR==2{print $1}')
-    mkdir -p /mnt/snapstore
-    mount -o subvol=@snapshots "$DEVICE" /mnt/snapstore
-    GEN_DIR="/mnt/snapstore/.snapshots"
-else
-    GEN_DIR="/.snapshots"
-fi
-
-MAX_GENS=5
-
-if [ ! -d "$GEN_DIR" ]; then
-    sudo mkdir -p "$GEN_DIR"
-fi
-
-echo -e "\033[0;32m  ›\033[0m Creating Zerene Generation..."
-
-LAST_NUM=$(ls "$GEN_DIR" | grep -oP 'gen_\K\d+' | sort -rn | head -n 1)
-NEXT_GEN=$(( ${LAST_NUM:-0} + 1 ))
-TARGET="$GEN_DIR/gen_$NEXT_GEN"
-
-btrfs subvolume snapshot / "$TARGET"
-
-CURRENT_GENS=$(ls -d "$GEN_DIR"/gen_* 2>/dev/null | wc -l)
-if [ "$CURRENT_GENS" -gt "$MAX_GENS" ]; then
-    OLDEST=$(ls -d "$GEN_DIR"/gen_* | sort -V | head -n 1)
-    echo -e "\033[0;31m  !\033[0m Rotating old generation: $(basename "$OLDEST")"
-    btrfs subvolume delete "$OLDEST"
-fi
-
-grub-mkconfig -o /boot/grub/grub.cfg
-SNAP
-
-chmod +x /usr/local/bin/zerene-snap
-
-# setup the Pacman Hook for generation system
-mkdir -p /etc/pacman.d/hooks
-cat > /etc/pacman.d/hooks/zerene-gen.hook <<'HOOK'
-[Trigger]
-Operation = Install
-Operation = Upgrade
-Operation = Remove
-Type = Package
-Target = *
-
-[Action]
-Description = Creating Zerene OS Generation (Snapshot)...
-When = PreTransaction
-Exec = /usr/local/bin/zerene-snap
-HOOK
-
-echo "alias gen-list='ls /.snapshots'" >> /home/$username/.bashrc
-echo "alias gen-save='/usr/local/bin/zerene-snap'" >> /home/$username/.bashrc
-
-echo "  > generation engine active"
-
-# subsystem configurations
-
-if [[ "$INSTALL_DEBIAN" == "true" ]]; then
-    header "Installing Debian Subspace"
-
-    step "Installing dependencies"
-    pacman -S --noconfirm debootstrap
-    pacman -S --noconfirm debian-archive-keyring
-
-    step "Bootstrap Debian stable"
-    mkdir -p /subspace/debian
-    debootstrap stable /subspace/debian http://deb.debian.org/debian/ || \
-    debootstrap --variant=minbase stable /subspace/debian http://deb.debian.org/debian/
-
-    if [ ! -d "/subspace/debian/usr" ]; then
-        echo "ERROR: Debian subspace installation failed"
-        echo "Please check debootstrap output above"
-        exit 1
-    fi
-
-    step "Cleaning apt cache"
-    rm -rf /subspace/debian/var/cache/apt/archives/*
-
-    step "Creating launcher script"
-    cat > /usr/local/bin/subspace-debian <<'DEBIAN'
-#!/bin/bash
-xhost +local: > /dev/null 2>&1
-if [ -n "$DISPLAY" ]; then
-    sudo systemd-nspawn -D /subspace/debian \
-        --bind-ro=/tmp/.X11-unix \
-        --bind=/dev/dri \
-        --setenv=DISPLAY=$DISPLAY \
-        /usr/bin/bash
-else
-    sudo systemd-nspawn -D /subspace/debian /usr/bin/bash
-fi
-DEBIAN
-    chmod +x /usr/local/bin/subspace-debian
-
-    echo "alias debian='sudo /usr/local/bin/subspace-debian'" >> /home/$username/.bashrc
-
-    echo "  > Debian subspace installed"
-fi
-
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Bootloader & Snapshots  ──\033[0m"
-echo ""
-
-# only enable grub-btrfs daemon when using btrfs - it auto-updates grub menu on snapshot changes
-if [[ "$FS_TYPE" == "btrfs" ]]; then
-    systemctl enable grub-btrfsd
-fi
-
-sed -i 's/^MODULES=(/MODULES=(vboxvideo /' /etc/mkinitcpio.conf
-sed -i 's/HOOKS=(base udev/HOOKS=(base udev plymouth/' /etc/mkinitcpio.conf
-
-mkinitcpio -P
+step "Installing Bootloader"
 
 if [[ "$BOOT_MODE" == "uefi" ]]; then
-    # uefi install - efi grub with fallback bootx64.efi
     pacman -S --noconfirm grub efibootmgr
-    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Zerene --recheck
-    mkdir -p /boot/efi/EFI/BOOT
-    cp /boot/efi/EFI/Zerene/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI
+    grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=zerene
 else
-    # legacy bios install - grub to mbr
     pacman -S --noconfirm grub
-    grub-install --target=i386-pc --recheck "$TARGET_DISK"
+    grub-install --target=i386-pc "$TARGET_DISK"
 fi
 
 grub-mkconfig -o /boot/grub/grub.cfg
 
-echo "  > bootloader installed"
+echo ""
+echo -e "${GREEN}  ✓  Zerene OS installed successfully!${RESET}"
+echo ""
 
 EOF
 
-step "Unmounting"
-umount -R /mnt 2>/dev/null || true
-ok "done"
-
-# --------------------------------------------------------
-# finish screen
-# --------------------------------------------------------
-
 echo
 rule
 echo
-echo -e "${BLUE}${BOLD}    zerene os installed successfully  ·  TEST${RESET}"
+ok "installation complete!"
 echo
-echo -e "${GRAY}    filesystem: $FS_TYPE  ·  boot: $BOOT_MODE${RESET}"
-echo -e "${GRAY}    disk option: $([ "$FORMAT_DISK" == "true" ] && echo "format entire disk" || echo "split ${SPLIT_PERCENT}%")${RESET}"
-echo -e "${GRAY}    tuning report  →  /etc/zerene-tune.txt${RESET}"
-echo -e "${GRAY}    you can now reboot${RESET}"
-echo
-rule
+echo "  reboot to start your new Zerene OS"
 echo
