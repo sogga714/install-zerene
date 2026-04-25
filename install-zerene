@@ -632,9 +632,9 @@ swap_choice=$(tui_menu "Swap & ZRAM" "Detected RAM: ${RAM_MB}MB\n\nSelect a memo
     "3" "ZRAM + Swap    - both zram and a swapfile (best for low ram)" \
     "4" "None           - skip swap entirely") || err "cancelled"
 
-plymouth_choice=$(tui_menu "Enable plymouth theme?" \
+plymouth_choice=$(tui_menu "Plymouth" "Enable plymouth boot theme?" \
     "1" "Yes     - enable plymouth"  \
-    "2" "No      - skip plymouth boot entirely") || err "cancelled"
+    "2" "No      - skip plymouth boot entirely") || err "cancelled"  # FIX: was missing the prompt argument — tui_menu takes title then prompt then items, the original only had title then items so everything shifted and whiptail returned empty
 
 # only ask about hibernation if they picked something with a swapfile
 # hibernation requires a real swapfile on disk - zram alone cant do it
@@ -1642,7 +1642,7 @@ fi
 if [[ "$plymouth_choice" == "1" ]]; then
 echo "one last check mate..."
 
-plymouth-set-default-theme zerene-spinner  # FIX: removed -R flag — it triggers an internal initramfs rebuild that can fail and kill the whole script. mkinitcpio -P on the next line already handles the rebuild, so -R is redundant and dangerous here
+plymouth-set-default-theme zerene-spinner  # FIX: removed -R, mkinitcpio -P below handles the rebuild
 mkinitcpio -P
 fi
 
