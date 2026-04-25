@@ -994,13 +994,13 @@ XKEYBOARD
 
 cat > /etc/os-release <<OS
 NAME="Zerene OS"
-PRETTY_NAME="Zerene OS (Xenovia 2 - TEST BUILD)"
+PRETTY_NAME="Zerene OS (Xenovia 2)"
 ID=zerene
 ID_LIKE=arch
 ANSI_COLOR="38;2;5;4;216"
 LOGO=zerene
 OS
-echo 'GRUB_DISTRIBUTOR="Zerene OS TEST BUILD"' >> /etc/default/grub
+echo 'GRUB_DISTRIBUTOR="Zerene OS"' >> /etc/default/grub
 
 echo ""
 echo -e "\033[38;2;5;4;216m  ──  Users & Groups  ──\033[0m"
