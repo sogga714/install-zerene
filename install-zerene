@@ -295,10 +295,18 @@ fi
 header "Filesystem"
 
 fs_choice=$(tui_menu "Filesystem Format" "Select the filesystem for your root partition:" \
-    "1" "btrfs       - snapshots, compression, subvolumes") || err "cancelled"
+    "1" "btrfs      - snapshots, compression, subvolumes  [recommended]" \
+    "2" "ext4       - classic, stable, widely supported" \
+    "3" "xfs        - high-performance, good for large files" \
+    "4" "f2fs       - flash-friendly, ideal for SSDs/NVMe" \
+    "5" "bcachefs   - modern CoW, snapshots, encryption") || err "cancelled"
 
 case "$fs_choice" in
     1) FS_TYPE="btrfs" ;;
+    2) FS_TYPE="ext4" ;;
+    3) FS_TYPE="xfs" ;;
+    4) FS_TYPE="f2fs" ;;
+    5) FS_TYPE="bcachefs" ;;
     *) FS_TYPE="btrfs" ;;
 esac
 
@@ -307,6 +315,35 @@ header "Nix Package Manager"
 nix_choice=$(tui_menu "Nix" "Include Nix package manager?" \
     "1" "Yes - install Nix (multi-user daemon mode)" \
     "2" "No  - skip Nix") || err "cancelled"
+
+header "Timeshift Snapshots"
+
+timeshift_choice=$(tui_menu "Timeshift" "Configure automated system snapshots with Timeshift?\n\nTimeshift will auto-snapshot before every pacman install/upgrade." \
+    "1" "Yes - install Timeshift + auto-snapshot on pacman  [recommended]" \
+    "2" "No  - skip Timeshift") || err "cancelled"
+
+INSTALL_TIMESHIFT=false
+TIMESHIFT_TYPE="rsync"
+
+if [[ "$timeshift_choice" == "1" ]]; then
+    INSTALL_TIMESHIFT=true
+
+    # auto-pick snapshot type based on filesystem
+    if [[ "$FS_TYPE" == "btrfs" ]]; then
+        TIMESHIFT_TYPE="btrfs"
+        tui_msg "Timeshift Mode" "Btrfs filesystem detected.\nTimeshift will use BTRFS mode (instant CoW snapshots)."
+    else
+        TIMESHIFT_TYPE="rsync"
+        tui_msg "Timeshift Mode" "Using RSYNC mode (works on ext4, xfs, f2fs, bcachefs).\nSnapshots are stored as full directory copies."
+    fi
+
+    timeshift_keep=$(tui_menu "Snapshot Retention" "How many snapshots to keep per trigger type?" \
+        "3"  "Keep 3  - lightweight, saves disk space" \
+        "5"  "Keep 5  - balanced  [recommended]" \
+        "10" "Keep 10 - more history, uses more space") || err "cancelled"
+
+    TIMESHIFT_KEEP="${timeshift_keep:-5}"
+fi
 
 header "Kernel"
 
@@ -762,6 +799,7 @@ SUM="
   Subspace   $SUBSPACE_SUMMARY
 
   Extra Pkgs ${EXTRA_PKGS:-none}
+  Timeshift   $([ "$INSTALL_TIMESHIFT" == "true" ] && echo "$TIMESHIFT_TYPE mode · keep $TIMESHIFT_KEEP snapshots · auto on pacman" || echo "disabled")
 
 Press Enter to begin installation, Esc to cancel."
 
@@ -789,7 +827,7 @@ if [[ "$FORMAT_DISK" == "true" || "$SPLIT_DISK" == "true" ]]; then
 
         if [[ "$SPLIT_DISK" == "true" ]]; then
             # split disk - create partition for zerene based on percentage
-            parted -s "$TARGET_DISK" mkpart primary 513MiB ${ZERENE_SIZE_GB}GiB
+            parted -s "$TARGET_DISK" mkpart primary ${ZERENE_SIZE_GB}MiB ${ZERENE_SIZE_GB}MiB
         else
             # full disk
             parted -s "$TARGET_DISK" mkpart primary 513MiB 100%
@@ -970,7 +1008,7 @@ cp /usr/share/pixmaps/zerene.svg /mnt/usr/share/pixmaps/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/backgrounds/
-cp -r /usr/share/backgrounds/* /mnt/usr/share/backgrounds/ 2>/dev/null || true
+cp -r /usr/share/backgrounds/* /mnt/usr/share/backgrounds/633
 ok "assets copied"
 
 # --------------------------------------------------------
@@ -1339,6 +1377,8 @@ GRUB_EXTRAS="quiet splash audit=0"
 [[ "$gpu_choice" == "1" || "$gpu_choice" == "2" ]] && GRUB_EXTRAS="\$GRUB_EXTRAS nvidia_drm.modeset=1"
 [[ "$AUTO_TUNE" == "true" ]] && GRUB_EXTRAS="\$GRUB_EXTRAS $KERN_PARAMS"
 
+sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_EXTRAS |" /etc/default/grub
+
 mkdir -p /etc/sysctl.d
 cat > /etc/sysctl.d/99-zerene.conf <<SYSCTL
 vm.swappiness = $SWAPPINESS
@@ -1530,12 +1570,169 @@ kernel:     $KERNEL_PKG
 headers:    $KERNEL_HEADERS
 auto-tune:  $AUTO_TUNE
 auto-config: $AUTO_CONFIG
+timeshift:  $INSTALL_TIMESHIFT ($TIMESHIFT_TYPE mode, keep $TIMESHIFT_KEEP)
 TUNE
 
-# --------------------------------------------------------
-# bootloader
-# --------------------------------------------------------
 
+# ──────────────────────────────────────────────────────────
+# Timeshift - automated snapshots via systemd + pacman hook
+# ──────────────────────────────────────────────────────────
+
+if [[ "$INSTALL_TIMESHIFT" == "true" ]]; then
+
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Timeshift Snapshots  ──\033[0m"
+echo ""
+
+# ── install timeshift + timeshift-systemd-timer from AUR ──
+# timeshift-systemd-timer provides the official boot + hourly systemd units
+# (aur.archlinux.org/packages/timeshift-systemd-timer)
+pacman -S --noconfirm --needed git base-devel
+
+_aur_install() {
+    local pkg="\$1"
+    if command -v yay &>/dev/null; then
+        sudo -u "$username" yay -S --noconfirm "\$pkg"
+    elif command -v paru &>/dev/null; then
+        sudo -u "$username" paru -S --noconfirm "\$pkg"
+    else
+        cd /tmp
+        sudo -u "$username" git clone "https://aur.archlinux.org/\${pkg}.git"
+        cd "\$pkg"
+        sudo -u "$username" makepkg -si --noconfirm --nocheck
+        cd /
+    fi
+}
+
+_aur_install timeshift
+_aur_install timeshift-systemd-timer
+
+echo "  > timeshift + timeshift-systemd-timer installed"
+
+# ── timeshift.json config ──────────────────────────────────
+mkdir -p /etc/timeshift
+
+TIMESHIFT_BACKUP_DEV=\$(findmnt -n -o SOURCE / | sed 's/\[.*//')
+TIMESHIFT_BACKUP_UUID=\$(blkid -s UUID -o value "\${TIMESHIFT_BACKUP_DEV}" 2>/dev/null || echo "")
+
+cat > /etc/timeshift/timeshift.json <<TSJSON
+{
+  "backup_device_uuid" : "\${TIMESHIFT_BACKUP_UUID}",
+  "parent_device_uuid" : "",
+  "do_first_run"       : "false",
+  "btrfs_mode"         : "$([ "$TIMESHIFT_TYPE" == "btrfs" ] && echo "true" || echo "false")",
+  "include_btrfs_home_for_backup"  : "false",
+  "stop_cron_emails"   : "true",
+  "btrfs_use_qgroup"   : "true",
+  "schedule_monthly"   : "false",
+  "schedule_weekly"    : "false",
+  "schedule_daily"     : "false",
+  "schedule_hourly"    : "true",
+  "schedule_boot"      : "true",
+  "count_monthly"      : "2",
+  "count_weekly"       : "3",
+  "count_daily"        : "$TIMESHIFT_KEEP",
+  "count_hourly"       : "$TIMESHIFT_KEEP",
+  "count_boot"         : "$TIMESHIFT_KEEP",
+  "snapshot_size"      : "",
+  "snapshot_count"     : "",
+  "date_format"        : "%Y-%m-%d %H:%M:%S",
+  "exclude"            : [
+    "+ /root/**",
+    "+ /home/$username/**",
+    "- /root/**",
+    "- /home/**",
+    "- /tmp/**",
+    "- /var/tmp/**",
+    "- /var/cache/pacman/pkg/**",
+    "- /var/log/**"
+  ],
+  "exclude-apps"       : []
+}
+TSJSON
+
+echo "  > timeshift configured ($TIMESHIFT_TYPE mode, keep $TIMESHIFT_KEEP)"
+
+# ── enable the upstream timeshift-systemd-timer units ─────
+# timeshift-boot.timer  : fires timeshift --create --tags B at OnBootSec=600
+# timeshift-hourly.timer: fires timeshift --check --scripted on schedule
+# these units are installed to /usr/lib/systemd/system/ by the AUR package
+# unit permissions should be 644 (not 755) to avoid journal warnings
+chmod 644 /usr/lib/systemd/system/timeshift-boot.service    2>/dev/null || true
+chmod 644 /usr/lib/systemd/system/timeshift-boot.timer      2>/dev/null || true
+chmod 644 /usr/lib/systemd/system/timeshift-hourly.service  2>/dev/null || true
+chmod 644 /usr/lib/systemd/system/timeshift-hourly.timer    2>/dev/null || true
+
+systemctl enable timeshift-boot.timer
+systemctl enable timeshift-hourly.timer
+echo "  > timeshift-boot.timer enabled    (snapshot 600s after boot, tag B)"
+echo "  > timeshift-hourly.timer enabled  (runs timeshift --check on schedule)"
+
+# ── zerene-snapshot helper: used by the pacman hook ───────
+# wraps timeshift --create with a label + log, tags snapshots as O (on-demand)
+cat > /usr/local/bin/zerene-snapshot <<'SNAPSCRIPT'
+#!/bin/bash
+# zerene-snapshot  -  take a labeled on-demand timeshift snapshot
+# called by the pacman pre-transaction hook before every install/upgrade/remove
+LABEL="${1:-manual}"
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+LOG=/var/log/zerene-snapshots.log
+
+echo "[$TIMESTAMP] snapshot requested: $LABEL" >> "$LOG"
+
+if /usr/bin/timeshift --create --scripted --comments "zerene: $LABEL" --tags O >> "$LOG" 2>&1; then
+    echo "[$TIMESTAMP] snapshot OK: $LABEL" >> "$LOG"
+else
+    echo "[$TIMESTAMP] snapshot FAILED: $LABEL" >> "$LOG"
+fi
+SNAPSCRIPT
+chmod +x /usr/local/bin/zerene-snapshot
+
+# ── pacman hook: pre-transaction snapshot ─────────────────
+# fires before every pacman install / upgrade / remove
+# uses zerene-snapshot so it's labeled + logged separately from the timer runs
+mkdir -p /etc/pacman.d/hooks
+
+cat > /etc/pacman.d/hooks/00-zerene-snapshot.hook <<'HOOK'
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Zerene: snapshotting before package operation...
+When = PreTransaction
+Exec = /usr/local/bin/zerene-snapshot "pre-pacman"
+HOOK
+
+echo "  > pacman hook installed: /etc/pacman.d/hooks/00-zerene-snapshot.hook"
+
+# ── pacman hook: post-install label ───────────────────────
+# tags the snapshot log after transaction completes
+cat > /etc/pacman.d/hooks/99-zerene-snapshot-done.hook <<'HOOKOK'
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Zerene: package operation complete
+When = PostTransaction
+Exec = /bin/sh -c 'echo "[$(date +%Y-%m-%d\ %H:%M:%S)] pacman transaction complete" >> /var/log/zerene-snapshots.log'
+HOOKOK
+
+echo "  > pacman post-hook installed"
+echo "  > timeshift automated snapshots ready"
+
+fi  # end INSTALL_TIMESHIFT block
+
+# ──────────────────────────────────────────────────────────
+
+# ── bootloader ────────────────────────────────────────────
 step "Installing Bootloader"
 
 if [[ "$BOOT_MODE" == "uefi" ]]; then
@@ -1545,9 +1742,6 @@ else
     pacman -S --noconfirm grub
     grub-install --target=i386-pc "$TARGET_DISK"
 fi
-
-# grub is now installed so /etc/default/grub exists - safe to edit it
-sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_EXTRAS |" /etc/default/grub
 
 grub-mkconfig -o /boot/grub/grub.cfg
 
@@ -1573,6 +1767,7 @@ echo
 echo -e "${GRAY}    filesystem: $FS_TYPE  ·  boot: $BOOT_MODE${RESET}"
 echo -e "${GRAY}    disk option: $([ "$FORMAT_DISK" == "true" ] && echo "format entire disk" || echo "split ${SPLIT_PERCENT}%")${RESET}"
 echo -e "${GRAY}    tuning report  →  /etc/zerene-tune.txt${RESET}"
+echo -e "${GRAY}    snapshot log   →  /var/log/zerene-snapshots.log${RESET}"
 echo -e "${GRAY}    you can now reboot${RESET}"
 echo
 rule
