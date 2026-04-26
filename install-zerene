@@ -842,19 +842,17 @@ if [[ "$FS_TYPE" == "btrfs" ]]; then
     mount "${TARGET_DISK}${P}2" /mnt
     btrfs subvolume create /mnt/@
     btrfs subvolume create /mnt/@home
-    btrfs subvolume create /mnt/@snapshots
     umount /mnt
 
     step "Mounting Btrfs Subvolumes"
     # Mount with zstd compression to help that HDD speed
     mount -o noatime,compress=zstd,subvol=@ "${TARGET_DISK}${P}2" /mnt
     if [[ "$BOOT_MODE" == "uefi" ]]; then
-        mkdir -p /mnt/{boot/efi,home,.snapshots}
+        mkdir -p /mnt/{boot/efi,home}
     else
-        mkdir -p /mnt/{boot,home,.snapshots}
+        mkdir -p /mnt/{boot/efi,home}
     fi
     mount -o noatime,compress=zstd,subvol=@home "${TARGET_DISK}${P}2" /mnt/home
-    mount -o noatime,compress=zstd,subvol=@snapshots "${TARGET_DISK}${P}2" /mnt/.snapshots
 else
     step "Mounting $FS_TYPE Partition"
     mount "${TARGET_DISK}${P}2" /mnt
@@ -969,8 +967,9 @@ mkdir -p /mnt/usr/share/pixmaps
 cp /usr/share/pixmaps/zerene.svg /mnt/usr/share/pixmaps/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
-mkdir -p /mnt/usr/share/backgrounds/
-cp -r /usr/share/backgrounds/* /mnt/usr/share/backgrounds/633
+mkdir -p /mnt/usr/share/backgrounds/ù
+cp -r /usr/share/backgrounds /mnt/usr/share/backgrounds/ 2>/dev/null || true
+
 ok "assets copied"
 
 # --------------------------------------------------------
@@ -1518,6 +1517,50 @@ if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" ]]; then
     echo "  > no subspaces selected"
 fi
 
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Generation Engine  ──\033[0m"
+echo ""
+
+pacman -S --noconfirm snapper snap-pac grub-btrfs
+sleep 5
+exec snapper -c root create-config /
+
+systemctl enable snapper-timeline.timer
+systemctl enable snapper-cleanup.timer
+
+
+# bash helper
+if ! grep -q "snapshot()" ~/.bashrc; then
+    cat >> ~/.bashrc << 'SNAPPA'
+
+# Snapper helper
+snapshot() {
+    if [ -z "$1" ]; then
+        echo "Usage: snapshot <description>"
+        return 1
+    fi
+    sudo snapper -c root create --description "$*"
+}
+SNAPPA
+fi
+
+
+# pacman + GRUB hook
+mkdir -p /etc/pacman.d/hooks
+
+cat > /etc/pacman.d/hooks/95-snapper-grub.hook << 'REGEN'
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = linux*
+Target = grub
+
+[Action]
+Description = Regenerating GRUB configuration...
+When = PostTransaction
+Exec = /usr/bin/grub-mkconfig -o /boot/grub/grub.cfg
+REGEN
 
 cat > /etc/zerene-tune.txt <<TUNE
 zerene auto tuning - applied at install (TEST VERSION)
@@ -1534,8 +1577,10 @@ auto-tune:  $AUTO_TUNE
 auto-config: $AUTO_CONFIG
 TUNE
 
+# --------------------------------------------------------
+# bootloader
+# --------------------------------------------------------
 
-# ── bootloader ────────────────────────────────────────────
 step "Installing Bootloader"
 
 if [[ "$BOOT_MODE" == "uefi" ]]; then
