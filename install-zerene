@@ -1,8 +1,7 @@
 #!/bin/bash
 
-#-------------------------------------------------
-# zerene os installer - xenovia 2 - test version
-#-------------------------------------------------
+# zerene os installer - xenovia 2 - TEST VERSION
+# This is a test version for development/testing purposes
 
 
 BLUE='\033[38;2;5;4;216m'       # #0504D8 zerene blue
@@ -63,9 +62,9 @@ spin_stop() {
 
 trap spin_stop EXIT
 
-#-------------------------------------------------
+# --------------------------------------------------------
 # whiptail wrappers - themed to zerene blue via NEWT_COLORS
-#-------------------------------------------------
+# --------------------------------------------------------
 
 # whiptail reads NEWT_COLORS to theme its dialogs
 # root=blue bg, window=dark, title=bright blue, button=blue
@@ -135,9 +134,9 @@ tui_scrollbox() {
     echo "$text" | whiptail --title "  $title  " --scrollbox 24 80 3>&1 1>&2 2>&3
 }
 
-#-------------------------------------------------
+# --------------------------------------------------------
 # splash
-#-------------------------------------------------
+# --------------------------------------------------------
 
 clear
 echo
@@ -172,9 +171,9 @@ fi
 ok "connected"
 echo
 
-#-------------------------------------------------
+# --------------------------------------------------------
 # hardware scan
-#-------------------------------------------------
+# --------------------------------------------------------
 
 spin_start "scanning hardware"
 CPU_VENDOR=$(grep -m1 "vendor_id" /proc/cpuinfo | awk '{print $3}')
@@ -210,9 +209,9 @@ else
 fi
 echo
 
-#-------------------------------------------------
+# --------------------------------------------------------
 # configuration - all questions before anything installs
-#-------------------------------------------------
+# --------------------------------------------------------
 
 header "System Identity"
 
@@ -696,9 +695,9 @@ for choice in $(echo "$subspace_selections" | tr -d '"'); do
     esac
 done
 
-#-------------------------------------------------
+# --------------------------------------------------------
 # readable names for summary
-#-------------------------------------------------
+# --------------------------------------------------------
 
 case $desktop_choice in
     1)  DN="Hyprland" ;;      2)  DN="KDE Plasma" ;;    3)  DN="XFCE4" ;;
@@ -735,9 +734,9 @@ header "Additional Packages"
 EXTRA_PKGS=$(tui_input "Additional Packages" \
     "Enter any extra packages to install before setup (space-separated).\nLeave blank to skip.\n\nExample: vim neovim htop wget curl firefox" "") || err "cancelled"
 
-#-------------------------------------------------
+# --------------------------------------------------------
 # confirm summary
-#-------------------------------------------------
+# --------------------------------------------------------
 
 SUM="
   Hostname   $hostname
@@ -768,9 +767,9 @@ Press Enter to begin installation, Esc to cancel."
 
 tui_yesno "Confirm Installation" "$SUM" || err "cancelled"
 
-#-------------------------------------------------
+# --------------------------------------------------------
 # installation - output is visible from here on
-#-------------------------------------------------
+# --------------------------------------------------------
 
 # partitioning
 clear
@@ -790,7 +789,7 @@ if [[ "$FORMAT_DISK" == "true" || "$SPLIT_DISK" == "true" ]]; then
 
         if [[ "$SPLIT_DISK" == "true" ]]; then
             # split disk - create partition for zerene based on percentage
-            parted -s "$TARGET_DISK" mkpart primary ${ZERENE_SIZE_GB}MiB ${ZERENE_SIZE_GB}MiB
+            parted -s "$TARGET_DISK" mkpart primary 513MiB ${ZERENE_SIZE_GB}GiB
         else
             # full disk
             parted -s "$TARGET_DISK" mkpart primary 513MiB 100%
@@ -891,7 +890,7 @@ FS_TOOLS=""
 
 pacstrap /mnt base "$KERNEL_PKG" "$KERNEL_HEADERS" linux-firmware \
     sudo fastfetch plymouth $NET_PKG base-devel git dkms \
-    $FS_TOOLS $EXTRA_PKGS snapper snap-pac
+    $FS_TOOLS $EXTRA_PKGS
 
 # Generate FSTAB (Crucial for Btrfs subvolumes)
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -971,12 +970,12 @@ cp /usr/share/pixmaps/zerene.svg /mnt/usr/share/pixmaps/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/backgrounds/
-cp -r /usr/share/backgrounds/* /mnt/usr/share/backgrounds/633
+cp -r /usr/share/backgrounds/* /mnt/usr/share/backgrounds/ 2>/dev/null || true
 ok "assets copied"
 
-#-------------------------------------------------
+# --------------------------------------------------------
 # chroot
-#-------------------------------------------------
+# --------------------------------------------------------
 
 step "Entering Chroot"
 
@@ -1340,8 +1339,6 @@ GRUB_EXTRAS="quiet splash audit=0"
 [[ "$gpu_choice" == "1" || "$gpu_choice" == "2" ]] && GRUB_EXTRAS="\$GRUB_EXTRAS nvidia_drm.modeset=1"
 [[ "$AUTO_TUNE" == "true" ]] && GRUB_EXTRAS="\$GRUB_EXTRAS $KERN_PARAMS"
 
-sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_EXTRAS |" /etc/default/grub
-
 mkdir -p /etc/sysctl.d
 cat > /etc/sysctl.d/99-zerene.conf <<SYSCTL
 vm.swappiness = $SWAPPINESS
@@ -1535,40 +1532,9 @@ auto-tune:  $AUTO_TUNE
 auto-config: $AUTO_CONFIG
 TUNE
 
-#-------------------------------------------------
-# snapshot engine
-#-------------------------------------------------
-
-# only set up snapshots if we're on btrfs - snapper needs subvolumes
-if [[ "$FS_TYPE" == "btrfs" ]]; then
-
-    # create snapper configs for root and home
-    # these point snapper at the right subvolumes
-    snapper -c root create-config /
-    snapper -c home create-config /home
-
-    # allow the user to run snapper without sudo
-    snapper -c root set-config ALLOW_USERS=$username SYNC_ACL=yes
-    snapper -c home set-config ALLOW_USERS=$username SYNC_ACL=yes
-
-    # take the first baseline snapshot so rollback has something to go back to
-    snapper -c root create -d "fresh install baseline" --read-write
-
-    # timeline timer - creates snapshots on a schedule (hourly/daily/weekly)
-    # boot timer - creates a snapshot on every boot before anything changes
-    systemctl enable snapper-timeline.timer
-    systemctl enable snapper-boot.timer
-
-    # grub-btrfsd watches for new snapshots and adds them to the grub menu
-    # lets you boot into any snapshot directly from grub
-    systemctl enable grub-btrfsd
-
-    echo "  > snapshot engine configured"
-fi
-
-#-------------------------------------------------
+# --------------------------------------------------------
 # bootloader
-#-------------------------------------------------
+# --------------------------------------------------------
 
 step "Installing Bootloader"
 
@@ -1579,6 +1545,9 @@ else
     pacman -S --noconfirm grub
     grub-install --target=i386-pc "$TARGET_DISK"
 fi
+
+# grub is now installed so /etc/default/grub exists - safe to edit it
+sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_EXTRAS |" /etc/default/grub
 
 grub-mkconfig -o /boot/grub/grub.cfg
 
@@ -1592,9 +1561,9 @@ step "Unmounting"
 umount -R /mnt 2>/dev/null || true
 ok "done"
 
-#-------------------------------------------------
+# --------------------------------------------------------
 # finish screen
-#-------------------------------------------------
+# --------------------------------------------------------
 
 echo
 rule
