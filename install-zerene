@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# zerene os installer - xenovia 2 - TEST VERSION
-# This is a test version for development/testing purposes
+#-------------------------------------------------
+# zerene os installer - xenovia 2 - test version
+#-------------------------------------------------
 
 
 BLUE='\033[38;2;5;4;216m'       # #0504D8 zerene blue
@@ -62,9 +63,9 @@ spin_stop() {
 
 trap spin_stop EXIT
 
-# --------------------------------------------------------
+#-------------------------------------------------
 # whiptail wrappers - themed to zerene blue via NEWT_COLORS
-# --------------------------------------------------------
+#-------------------------------------------------
 
 # whiptail reads NEWT_COLORS to theme its dialogs
 # root=blue bg, window=dark, title=bright blue, button=blue
@@ -134,9 +135,9 @@ tui_scrollbox() {
     echo "$text" | whiptail --title "  $title  " --scrollbox 24 80 3>&1 1>&2 2>&3
 }
 
-# --------------------------------------------------------
+#-------------------------------------------------
 # splash
-# --------------------------------------------------------
+#-------------------------------------------------
 
 clear
 echo
@@ -171,9 +172,9 @@ fi
 ok "connected"
 echo
 
-# --------------------------------------------------------
+#-------------------------------------------------
 # hardware scan
-# --------------------------------------------------------
+#-------------------------------------------------
 
 spin_start "scanning hardware"
 CPU_VENDOR=$(grep -m1 "vendor_id" /proc/cpuinfo | awk '{print $3}')
@@ -209,9 +210,9 @@ else
 fi
 echo
 
-# --------------------------------------------------------
+#-------------------------------------------------
 # configuration - all questions before anything installs
-# --------------------------------------------------------
+#-------------------------------------------------
 
 header "System Identity"
 
@@ -361,7 +362,7 @@ case "$kernel_choice" in
         # auto-config - generate .config based on detected hardware
         AUTO_CONFIG=true
         KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
-        
+
         # generate .config content based on hardware detection
         AUTO_CONFIG_CONTENT="#
 # Zerene auto-generated kernel config based on your hardware (TEST)
@@ -695,9 +696,9 @@ for choice in $(echo "$subspace_selections" | tr -d '"'); do
     esac
 done
 
-# --------------------------------------------------------
+#-------------------------------------------------
 # readable names for summary
-# --------------------------------------------------------
+#-------------------------------------------------
 
 case $desktop_choice in
     1)  DN="Hyprland" ;;      2)  DN="KDE Plasma" ;;    3)  DN="XFCE4" ;;
@@ -734,9 +735,9 @@ header "Additional Packages"
 EXTRA_PKGS=$(tui_input "Additional Packages" \
     "Enter any extra packages to install before setup (space-separated).\nLeave blank to skip.\n\nExample: vim neovim htop wget curl firefox" "") || err "cancelled"
 
-# --------------------------------------------------------
+#-------------------------------------------------
 # confirm summary
-# --------------------------------------------------------
+#-------------------------------------------------
 
 SUM="
   Hostname   $hostname
@@ -767,9 +768,9 @@ Press Enter to begin installation, Esc to cancel."
 
 tui_yesno "Confirm Installation" "$SUM" || err "cancelled"
 
-# --------------------------------------------------------
+#-------------------------------------------------
 # installation - output is visible from here on
-# --------------------------------------------------------
+#-------------------------------------------------
 
 # partitioning
 clear
@@ -786,10 +787,10 @@ if [[ "$FORMAT_DISK" == "true" || "$SPLIT_DISK" == "true" ]]; then
         parted -s "$TARGET_DISK" mklabel gpt
         parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 513MiB
         parted -s "$TARGET_DISK" set 1 esp on
-        
+
         if [[ "$SPLIT_DISK" == "true" ]]; then
             # split disk - create partition for zerene based on percentage
-            parted -s "$TARGET_DISK" mkpart primary 513MiB ${ZERENE_SIZE_GB}GiB
+            parted -s "$TARGET_DISK" mkpart primary ${ZERENE_SIZE_GB}MiB ${ZERENE_SIZE_GB}MiB
         else
             # full disk
             parted -s "$TARGET_DISK" mkpart primary 513MiB 100%
@@ -800,7 +801,7 @@ if [[ "$FORMAT_DISK" == "true" || "$SPLIT_DISK" == "true" ]]; then
         parted -s "$TARGET_DISK" mklabel msdos
         parted -s "$TARGET_DISK" mkpart primary 1MiB 3MiB
         parted -s "$TARGET_DISK" set 1 bios_grub on
-        
+
         if [[ "$SPLIT_DISK" == "true" ]]; then
             # split disk
             parted -s "$TARGET_DISK" mkpart primary 3MiB ${ZERENE_SIZE_GB}MiB
@@ -890,7 +891,7 @@ FS_TOOLS=""
 
 pacstrap /mnt base "$KERNEL_PKG" "$KERNEL_HEADERS" linux-firmware \
     sudo fastfetch plymouth $NET_PKG base-devel git dkms \
-    $FS_TOOLS $EXTRA_PKGS snapper
+    $FS_TOOLS $EXTRA_PKGS snapper snap-pac
 
 # Generate FSTAB (Crucial for Btrfs subvolumes)
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -921,19 +922,19 @@ KCONF
 elif [[ "$AUTO_CONFIG" == "true" ]]; then
     # write the generated .config to a file for review and optional editing
     step "Applying Auto-generated Kernel Config"
-    
+
     # write config to temp location in chroot
     echo "$AUTO_CONFIG_CONTENT" > /mnt/root/zerene-kernel-config.txt
-    
+
     # show it in a scrollbox so user can review
     tui_scrollbox "Kernel Config" "$AUTO_CONFIG_CONTENT"
-    
+
     # ask if they want to use it, edit it, or go with defaults
     config_action=$(tui_menu "Kernel Config" "Your auto-generated .config has been created.\nWhat would you like to do?" \
         "1" "Use as-is    - install with this config" \
         "2" "Edit config  - modify before building" \
         "3" "Use default  - use arch's default config") || err "cancelled"
-    
+
     case "$config_action" in
         1)
             # use auto-config - apply it during kernel build
@@ -970,12 +971,12 @@ cp /usr/share/pixmaps/zerene.svg /mnt/usr/share/pixmaps/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/backgrounds/
-cp -r /usr/share/backgrounds/* /mnt/usr/share/backgrounds/
+cp -r /usr/share/backgrounds/* /mnt/usr/share/backgrounds/633
 ok "assets copied"
 
-# --------------------------------------------------------
+#-------------------------------------------------
 # chroot
-# --------------------------------------------------------
+#-------------------------------------------------
 
 step "Entering Chroot"
 
@@ -1028,18 +1029,18 @@ if [[ "$INSTALL_NIX" == "true" ]]; then
     chmod 1775 /nix/store
     chown -R root:nixbld /nix/var/nix
     chmod -R ug+rwX /nix/var/nix
-    
+
     mkdir -p /etc/nix
     cat > /etc/nix/nix.conf <<NIX
-experimental-features = nix-command 
+experimental-features = nix-command
 max-jobs = auto
 build-users-group = nixbld
 # CRITICAL: Disable sandboxing for the chroot install phase
 sandbox = false
 NIX
-    
+
     systemctl enable nix-daemon
-    
+
     # Exporting this prevents nix-channel from trying to talk to a daemon that isn't running yet
     export NIX_REMOTE=""
     nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
@@ -1409,7 +1410,7 @@ elif [[ "$HIBERNATION" == "true" && "$swap_choice" == "1" ]]; then
     systemctl enable systemd-hibernate.target 2>/dev/null || true
 fi
 
-# multi select lwk best feature 
+# multi select lwk best feature
 
 echo ""
 echo -e "\033[38;2;5;4;216m  ──  Subspaces  ──\033[0m"
@@ -1468,11 +1469,11 @@ if [[ "$INSTALL_ALPINE" == "true" ]]; then
     # Create the subspace and the dedicated workspace
     mkdir -p /subspace/alpine
     mkdir -p /tempo/alpine-workspace
-    
+
     # Download: Save it with a specific filename inside your tempo path
     curl -L "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.0-x86_64.tar.gz" \
          -o /tempo/alpine-workspace/alpine.tar.gz
-    
+
     # Extract: Point to that specific filename
     tar -xf "/tempo/alpine-workspace/alpine.tar.gz" -C /subspace/alpine
 
@@ -1518,9 +1519,6 @@ if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" ]]; then
     echo "  > no subspaces selected"
 fi
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  snapshot engine  ──\033[0m"
-echo ""
 
 cat > /etc/zerene-tune.txt <<TUNE
 zerene auto tuning - applied at install (TEST VERSION)
@@ -1537,9 +1535,40 @@ auto-tune:  $AUTO_TUNE
 auto-config: $AUTO_CONFIG
 TUNE
 
-# --------------------------------------------------------
-# bootloader and snapshots
-# --------------------------------------------------------
+#-------------------------------------------------
+# snapshot engine
+#-------------------------------------------------
+
+# only set up snapshots if we're on btrfs - snapper needs subvolumes
+if [[ "$FS_TYPE" == "btrfs" ]]; then
+
+    # create snapper configs for root and home
+    # these point snapper at the right subvolumes
+    snapper -c root create-config /
+    snapper -c home create-config /home
+
+    # allow the user to run snapper without sudo
+    snapper -c root set-config ALLOW_USERS=$username SYNC_ACL=yes
+    snapper -c home set-config ALLOW_USERS=$username SYNC_ACL=yes
+
+    # take the first baseline snapshot so rollback has something to go back to
+    snapper -c root create -d "fresh install baseline" --read-write
+
+    # timeline timer - creates snapshots on a schedule (hourly/daily/weekly)
+    # boot timer - creates a snapshot on every boot before anything changes
+    systemctl enable snapper-timeline.timer
+    systemctl enable snapper-boot.timer
+
+    # grub-btrfsd watches for new snapshots and adds them to the grub menu
+    # lets you boot into any snapshot directly from grub
+    systemctl enable grub-btrfsd
+
+    echo "  > snapshot engine configured"
+fi
+
+#-------------------------------------------------
+# bootloader
+#-------------------------------------------------
 
 step "Installing Bootloader"
 
@@ -1551,40 +1580,21 @@ else
     grub-install --target=i386-pc "$TARGET_DISK"
 fi
 
-
+grub-mkconfig -o /boot/grub/grub.cfg
 
 echo "one last check mate..."
 
 plymouth-set-default-theme -R zerene-spinner
 mkinitcpio -P
-
-snapper -c root create-config /
-snapper -c home create-config /home
-
-cat >> /etc/fstab <<'FSTAB'
-# Snapper snapshots
-UUID={ROOT_UUID}    /.snapshots        btrfs    rw,relatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvol=/.snapshots
-UUID={ROOT_UUID}    /home/.snapshots   btrfs    rw,relatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvol=/home/.snapshots
-FSTAB
-
-snapper -c root set-config ALLOW_USERS=$username SYNC_ACL=yes
-snapper -c home set-config ALLOW_USERS=$username SYNC_ACL=yes
-
-snapper create -d "Initial subvolume" --read-write
-
-grub-mkconfig -o /boot/grub/grub.cfg
-
-pacman -S --noconfirm snap-pac
-systemctl enable snapper-timeline.timer snapper-boot.timer grub-btrfsd
 EOF
 
 step "Unmounting"
 umount -R /mnt 2>/dev/null || true
 ok "done"
 
-# --------------------------------------------------------
+#-------------------------------------------------
 # finish screen
-# --------------------------------------------------------
+#-------------------------------------------------
 
 echo
 rule
