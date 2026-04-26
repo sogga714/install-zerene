@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# zerene os installer - xenovia 2 
+# zerene os installer - xenovia 2 - TEST VERSION
+# This is a test version for development/testing purposes
 
 
 BLUE='\033[38;2;5;4;216m'       # #0504D8 zerene blue
@@ -301,19 +302,11 @@ case "$fs_choice" in
     *) FS_TYPE="btrfs" ;;
 esac
 
-header "Snapshots"
-
-snapshots_choice=$(tui_menu "Snapshots" "Include snapshots? (allows you to recover your past build after failed update) (Btrfs only)" \
-    "1" "Yes - set up snapshots system " \
-    "2" "No  - skip snapshots") || err "cancelled"
-
-
 header "Nix Package Manager"
 
 nix_choice=$(tui_menu "Nix" "Include Nix package manager?" \
     "1" "Yes - install Nix (multi-user daemon mode)" \
     "2" "No  - skip Nix") || err "cancelled"
-
 
 header "Kernel"
 
@@ -632,10 +625,6 @@ swap_choice=$(tui_menu "Swap & ZRAM" "Detected RAM: ${RAM_MB}MB\n\nSelect a memo
     "3" "ZRAM + Swap    - both zram and a swapfile (best for low ram)" \
     "4" "None           - skip swap entirely") || err "cancelled"
 
-plymouth_choice=$(tui_menu "Plymouth" "Enable plymouth boot theme?" \
-    "1" "Yes     - enable plymouth"  \
-    "2" "No      - skip plymouth boot entirely") || err "cancelled"  # FIX: was missing the prompt argument — tui_menu takes title then prompt then items, the original only had title then items so everything shifted and whiptail returned empty
-
 # only ask about hibernation if they picked something with a swapfile
 # hibernation requires a real swapfile on disk - zram alone cant do it
 HIBERNATION=false
@@ -800,7 +789,7 @@ if [[ "$FORMAT_DISK" == "true" || "$SPLIT_DISK" == "true" ]]; then
         
         if [[ "$SPLIT_DISK" == "true" ]]; then
             # split disk - create partition for zerene based on percentage
-            parted -s "$TARGET_DISK" mkpart primary ${ZERENE_SIZE_GB}MiB ${ZERENE_SIZE_GB}MiB
+            parted -s "$TARGET_DISK" mkpart primary 513MiB ${ZERENE_SIZE_GB}GiB
         else
             # full disk
             parted -s "$TARGET_DISK" mkpart primary 513MiB 100%
@@ -853,21 +842,19 @@ if [[ "$FS_TYPE" == "btrfs" ]]; then
     mount "${TARGET_DISK}${P}2" /mnt
     btrfs subvolume create /mnt/@
     btrfs subvolume create /mnt/@home
-    [[ "$snapshots_choice" == "1" ]] && btrfs subvolume create /mnt/@snapshots
+    btrfs subvolume create /mnt/@snapshots
     umount /mnt
 
     step "Mounting Btrfs Subvolumes"
     # Mount with zstd compression to help that HDD speed
     mount -o noatime,compress=zstd,subvol=@ "${TARGET_DISK}${P}2" /mnt
     if [[ "$BOOT_MODE" == "uefi" ]]; then
-        mkdir -p /mnt/{boot/efi,home}
-        [[ "$snapshots_choice" == "1" ]] && mkdir -p /mnt/snapshots
+        mkdir -p /mnt/{boot/efi,home,.snapshots}
     else
-        mkdir -p /mnt/{boot,home}
-        [[ "$snapshots_choice" == "1" ]] && mkdir -p /mnt/snapshots
+        mkdir -p /mnt/{boot,home,.snapshots}
     fi
     mount -o noatime,compress=zstd,subvol=@home "${TARGET_DISK}${P}2" /mnt/home
-    [[ "$snapshots_choice" == "1" ]] && mount -o noatime,compress=zstd,subvol=@snapshots "${TARGET_DISK}${P}2" /mnt/snapshots
+    mount -o noatime,compress=zstd,subvol=@snapshots "${TARGET_DISK}${P}2" /mnt/.snapshots
 else
     step "Mounting $FS_TYPE Partition"
     mount "${TARGET_DISK}${P}2" /mnt
@@ -897,14 +884,13 @@ step "Installing Base System + Generation Tools"
 # Added btrfs-progs and grub-btrfs for btrfs, xfsprogs for xfs, etc.
 FS_TOOLS=""
 [[ "$FS_TYPE" == "btrfs" ]]    && FS_TOOLS="btrfs-progs grub-btrfs inotify-tools"
-[[ "$FS_TYPE" == "btrfs" && "$snapshots_choice" == "1" ]] && FS_TOOLS="$FS_TOOLS snapper"
 [[ "$FS_TYPE" == "xfs" ]]      && FS_TOOLS="xfsprogs"
 [[ "$FS_TYPE" == "f2fs" ]]     && FS_TOOLS="f2fs-tools"
 [[ "$FS_TYPE" == "bcachefs" ]] && FS_TOOLS="bcachefs-tools"
 
 pacstrap /mnt base "$KERNEL_PKG" "$KERNEL_HEADERS" linux-firmware \
     sudo fastfetch plymouth $NET_PKG base-devel git dkms \
-    $FS_TOOLS $EXTRA_PKGS
+    $FS_TOOLS $EXTRA_PKGS snapper
 
 # Generate FSTAB (Crucial for Btrfs subvolumes)
 genfstab -U /mnt >> /mnt/etc/fstab
@@ -983,7 +969,8 @@ mkdir -p /mnt/usr/share/pixmaps
 cp /usr/share/pixmaps/zerene.svg /mnt/usr/share/pixmaps/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
-
+mkdir -p /mnt/usr/share/backgrounds/
+cp -r /usr/share/backgrounds/* /mnt/usr/share/backgrounds/
 ok "assets copied"
 
 # --------------------------------------------------------
@@ -1032,75 +1019,6 @@ if [ ! -f /etc/sudoers ]; then touch /etc/sudoers; chmod 440 /etc/sudoers; fi
 if ! grep -q "^%wheel" /etc/sudoers; then echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers; fi
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 echo "  > users configured"
-
-# snapper snapshots
-if [[ "$snapshots_choice" == "1" ]]; then
-    snapper -c root create-config /
-    # Fix: always snapshot from @ subvolume, not current subvolume (avoids nesting issues)
-    sed -i 's/^SUBMOUNT="\/"/SUBMOUNT="\/@"/g' /etc/snapper/configs/root
-    sed -i 's/ALLOW_USERS=""/ALLOW_USERS="'"$username"'"/g' /etc/snapper/configs/root
-    sed -i 's/ALLOW_GROUPS=""/ALLOW_GROUPS="wheel"/g' /etc/snapper/configs/root
-    # Limit to 5 snapshots max to save space
-    sed -i 's/^MAX_USERS=".*"/MAX_USERS="5"/g' /etc/snapper/configs/root
-    # symlink for easy access to snapshots
-    ln -sf /home/.snapshots /snapshots
-    
-    # pacman hook - auto-snapshot before/after package changes
-    mkdir -p /etc/pacman.d/hooks
-    cat > /etc/pacman.d/hooks/90-snapper.hook <<PACHOOK
-[Trigger]
-Operation = Upgrade
-Operation = Install
-Operation = Remove
-Type = Package
-Target = *
-
-[Action]
-Description = Creating snapper snapshot before pacman transaction...
-When = PreTransaction
-Exec = /usr/bin/snapper -c root create --description "before pacman"
-NeedsRecovery = yes
-
-[Trigger]
-Operation = Upgrade
-Operation = Install
-Operation = Remove
-Type = Package
-Target = *
-
-[Action]
-Description = Creating snapper snapshot after pacman transaction...
-When = PostTransaction
-Exec = /usr/bin/snapper -c root create --description "after pacman"
-NeedsRecovery = yes
-PACHOOK
-    echo "  > snapper auto-snapshot hook configured"
-
-    # manual snapshot command
-    cat > /usr/local/bin/snapshot <<SNAP
-#!/bin/bash
-case "\$1" in
-    -c|--create)
-        snapper -c root create --description "manual snapshot"
-        echo "Snapshot created"
-        ;;
-    -l|--list)
-        snapper -c root list
-        ;;
-    -d|--delete)
-        snapper -c root delete "\$2"
-        ;;
-    *)
-        echo "Usage: snapshot [command]"
-        echo "  -c, --create          create a manual snapshot"
-        echo "  -l, --list         list snapshots"
-        echo "  -d, --delete NUM  delete snapshot #NUM"
-        ;;
-esac
-SNAP
-    chmod +x /usr/local/bin/snapshot
-    echo "  > snapshot command installed"
-fi
 
 # nix
 if [[ "$INSTALL_NIX" == "true" ]]; then
@@ -1600,6 +1518,9 @@ if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" ]]; then
     echo "  > no subspaces selected"
 fi
 
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  snapshot engine  ──\033[0m"
+echo ""
 
 cat > /etc/zerene-tune.txt <<TUNE
 zerene auto tuning - applied at install (TEST VERSION)
@@ -1617,7 +1538,7 @@ auto-config: $AUTO_CONFIG
 TUNE
 
 # --------------------------------------------------------
-# bootloader
+# bootloader and snapshots
 # --------------------------------------------------------
 
 step "Installing Bootloader"
@@ -1630,22 +1551,31 @@ else
     grub-install --target=i386-pc "$TARGET_DISK"
 fi
 
-grub-mkconfig -o /boot/grub/grub.cfg
 
-# include btrfs snapshots in GRUB menu
-if [[ "$snapshots_choice" == "1" ]]; then
-    (/usr/bin/grub-btrfsd /boot &) 2>/dev/null || true
-    grub-mkconfig -o /boot/grub/grub.cfg >/dev/null
-    echo "  > snapshots available in GRUB menu"
-fi
 
-if [[ "$plymouth_choice" == "1" ]]; then
 echo "one last check mate..."
 
-plymouth-set-default-theme zerene-spinner  # FIX: removed -R, mkinitcpio -P below handles the rebuild
+plymouth-set-default-theme -R zerene-spinner
 mkinitcpio -P
-fi
 
+snapper -c root create-config /
+snapper -c home create-config /home
+
+cat >> /etc/fstab <<'FSTAB'
+# Snapper snapshots
+UUID={ROOT_UUID}    /.snapshots        btrfs    rw,relatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvol=/.snapshots
+UUID={ROOT_UUID}    /home/.snapshots   btrfs    rw,relatime,compress=zstd:1,ssd,discard=async,space_cache=v2,subvol=/home/.snapshots
+FSTAB
+
+snapper -c root set-config ALLOW_USERS=$username SYNC_ACL=yes
+snapper -c home set-config ALLOW_USERS=$username SYNC_ACL=yes
+
+snapper create -d "Initial subvolume" --read-write
+
+grub-mkconfig -o /boot/grub/grub.cfg
+
+pacman -S --noconfirm snap-pac
+systemctl enable snapper-timeline.timer snapper-boot.timer grub-btrfsd
 EOF
 
 step "Unmounting"
