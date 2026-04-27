@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# zerene os installer - xenovia 2 - TEST VERSION
-# This is a test version for development/testing purposes
+# zerene os installer - xenovia 2 -
+# This is the installer for version Xenovia 2
 
 
 BLUE='\033[38;2;5;4;216m'       # #0504D8 zerene blue
@@ -150,7 +150,7 @@ cat << 'LOGO'
      ╚══════╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝
 LOGO
 echo -e "${RESET}"
-echo -e "${GRAY}                  xenovia 2  ·  installer  ·  TEST${RESET}"
+echo -e "${GRAY}                  xenovia 2  ·  installer  · "
 echo
 rule
 echo
@@ -960,7 +960,10 @@ KEDIT
     esac
 fi
 
-step "Copying Zerene Assets"
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Assets  ──\033[0m"
+echo ""
+clear
 mkdir -p /mnt/etc/fastfetch
 [ -d /etc/fastfetch ] && cp -r /etc/fastfetch/* /mnt/etc/fastfetch/
 mkdir -p /mnt/usr/share/pixmaps
@@ -976,7 +979,11 @@ ok "assets copied"
 # chroot
 # --------------------------------------------------------
 
-step "Entering Chroot"
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Installing main sys.  ──\033[0m"
+echo ""
+sleep 3
+clear 
 
 arch-chroot /mnt bash <<EOF
 
@@ -1410,6 +1417,8 @@ fi
 
 # multi select lwk best feature
 
+clear 
+
 echo ""
 echo -e "\033[38;2;5;4;216m  ──  Subspaces  ──\033[0m"
 echo ""
@@ -1517,16 +1526,19 @@ if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" ]]; then
     echo "  > no subspaces selected"
 fi
 
+clear
 echo ""
 echo -e "\033[38;2;5;4;216m  ──  Generation Engine  ──\033[0m"
 echo ""
 
 pacman -S --noconfirm snapper snap-pac grub-btrfs
-sleep 5
-exec snapper -c root create-config /
+
+
+snapper -c root create-config /
 
 systemctl enable snapper-timeline.timer
 systemctl enable snapper-cleanup.timer
+systemctl enable grub-btrfsd
 
 
 # bash helper
@@ -1552,9 +1564,9 @@ cat > /etc/pacman.d/hooks/95-snapper-grub.hook << 'REGEN'
 [Trigger]
 Operation = Install
 Operation = Upgrade
+Operation = Remove
 Type = Package
-Target = linux*
-Target = grub
+Target = *
 
 [Action]
 Description = Regenerating GRUB configuration...
@@ -1562,8 +1574,10 @@ When = PostTransaction
 Exec = /usr/bin/grub-mkconfig -o /boot/grub/grub.cfg
 REGEN
 
+chmod 644 /etc/pacman.d/hooks/95-snapper-grub.hook
+
 cat > /etc/zerene-tune.txt <<TUNE
-zerene auto tuning - applied at install (TEST VERSION)
+zerene auto tuning - applied at install 
 
 cpu:        $CPU_MODEL_NAME
 cores:      $CPU_CORES
@@ -1580,8 +1594,10 @@ TUNE
 # --------------------------------------------------------
 # bootloader
 # --------------------------------------------------------
-
-step "Installing Bootloader"
+clear
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  Bootloader  ──\033[0m"
+echo ""
 
 if [[ "$BOOT_MODE" == "uefi" ]]; then
     pacman -S --noconfirm grub efibootmgr
@@ -1606,16 +1622,20 @@ ok "done"
 # --------------------------------------------------------
 # finish screen
 # --------------------------------------------------------
-
+clear
 echo
+echo ""
+echo -e "\033[38;2;5;4;216m  ──  done!  ──\033[0m"
+echo ""
 rule
+fastfetch
 echo
-echo -e "${BLUE}${BOLD}    zerene os installed successfully  ·  TEST${RESET}"
+echo -e "${BLUE}${BOLD}    Zerene OS installed successfully  ·  VER : XENOVIA 2"
 echo
 echo -e "${GRAY}    filesystem: $FS_TYPE  ·  boot: $BOOT_MODE${RESET}"
 echo -e "${GRAY}    disk option: $([ "$FORMAT_DISK" == "true" ] && echo "format entire disk" || echo "split ${SPLIT_PERCENT}%")${RESET}"
 echo -e "${GRAY}    tuning report  →  /etc/zerene-tune.txt${RESET}"
 echo -e "${GRAY}    you can now reboot${RESET}"
-echo
+echo "If you do not see any snapshots or cannot create any, please run "snapper -c root create-config /" in your system."
 rule
 echo
