@@ -325,7 +325,8 @@ kernel_choice=$(tui_menu "Kernel" "$KERN_PROMPT" \
     "4" "linux-lts      - long term support, older but very stable" \
     "5" "auto-tune      - zerene picks best kernel + tunes for your hw" \
     "6" "auto-config   - generate .config based on your specs" \
-    "7" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled"
+    "7" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled" \
+    "8" "linux-cachyos  - best option for gaming, performance focused." 
 
 KERNEL_PKG="linux"
 KERNEL_HEADERS="linux-headers"
@@ -548,6 +549,8 @@ CONFIG_PREEMPT_VOLUNTARY=y
             "3" "vim        - edit .config in vim" \
             "4" "nano       - edit .config in nano") || err "cancelled"
         ;;
+
+    8) KERNEL_PKG="linux-cachyos";      KERNEL_HEADERS="linux-cachyos-headers" ;;
 esac
 
 header "System"
