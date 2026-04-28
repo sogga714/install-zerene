@@ -221,6 +221,12 @@ password=$(tui_pass "User Account" "Enter password:") || err "cancelled"
 password2=$(tui_pass "User Account" "Confirm password:") || err "cancelled"
 [[ "$password" != "$password2" ]] && err "passwords do not match"
 
+header "Privilege Escalation"
+
+priv_choice=$(tui_menu "Privilege Escalation" "Select your privilege escalation tool:" \
+    "1" "sudo      - standard, most compatible (recommended)" \
+    "2" "doas      - minimal, openbsd-style (opendoas)") || err "cancelled"
+
 header "Disk"
 
 DISK_LIST=()
@@ -557,7 +563,7 @@ audio_choice=$(tui_menu "Audio" "Select audio system:" \
 
 header "Desktop Environment"
 
-desktop_choice=$(tui_menu "Desktop Environment" "Select your desktop environment:" \
+desktop_choice=$(tui_menu "Desktop Environment" "Select your desktop environment or window manager:" \
     "1"  "Hyprland      wayland tiling compositor" \
     "2"  "KDE Plasma    full featured kde desktop" \
     "3"  "XFCE4         lightweight classic desktop" \
@@ -586,10 +592,38 @@ desktop_choice=$(tui_menu "Desktop Environment" "Select your desktop environment
     "26" "spectrwm      minimalist bsd-style tiling" \
     "27" "LXDE          lightest full de, gtk2" \
     "28" "Pantheon      elementary os desktop" \
-    "29" "Plasma Mobile kde mobile shell" \
-    "30" "Xorg only     - minimal X without desktop" \
-    "31" "Server        - no GPU, headless optimized" \
-    "32" "None          no desktop") || err "cancelled"
+    "29" "Plasma Mobile kde mobile shell") || err "cancelled"
+
+# ask about display manager / greeter after DE selection
+# wayland compositors that have their own greeter skip this
+USE_CUSTOM_DM=false
+CUSTOM_DM_PKG=""
+CUSTOM_DM_SVC=""
+
+case "$desktop_choice" in
+    # these have their own greeters - skip DM prompt
+    1|5|20|21|22|15)
+        USE_CUSTOM_DM=false
+        ;;
+    # everything else can optionally use SDDM
+    *)
+        sddm_choice=$(tui_menu "Display Manager" "Select a display manager (login screen):\n\nDefault shown per DE, but you can override:" \
+            "1" "SDDM               qt-based, great for KDE/LXQt" \
+            "2" "LightDM            gtk greeter, universal" \
+            "3" "GDM                gnome display manager" \
+            "4" "greetd + tuigreet  minimal terminal greeter" \
+            "5" "ly                 terminal display manager") || err "cancelled"
+
+        case "$sddm_choice" in
+            1) CUSTOM_DM_PKG="sddm";                    CUSTOM_DM_SVC="sddm" ;;
+            2) CUSTOM_DM_PKG="lightdm lightdm-gtk-greeter"; CUSTOM_DM_SVC="lightdm" ;;
+            3) CUSTOM_DM_PKG="gdm";                     CUSTOM_DM_SVC="gdm" ;;
+            4) CUSTOM_DM_PKG="greetd greetd-tuigreet";  CUSTOM_DM_SVC="greetd" ;;
+            5) CUSTOM_DM_PKG="ly";                      CUSTOM_DM_SVC="ly" ;;
+        esac
+        USE_CUSTOM_DM=true
+        ;;
+esac
 
 header "AUR Helper"
 
@@ -681,17 +715,20 @@ header "Subspaces"
 # MULTI-SELECT: Use checklist to allow selecting multiple subspaces
 subspace_selections=$(tui_checklist "Linux Subspaces" "Optional: Select additional distros subsystems to install alongside zerene\n\nSelect one or more (Press Space to toggle):" \
     "debian" "Debian      - Debian stable workspace" OFF \
+    "gentoo" "Void Linux  - Void lightweight workspace " OFF \
     "alpine" "Alpine       - Alpine lightweight workspace" OFF ) || err "cancelled"
 
 # Clear previous subspace flags
 INSTALL_DEBIAN=false
 INSTALL_ALPINE=false
+INSTALL_GENTOO=false
 
 # Parse selections and set flags
 for choice in $(echo "$subspace_selections" | tr -d '"'); do
     case "$choice" in
         debian) INSTALL_DEBIAN=true ;;
         alpine)  INSTALL_ALPINE=true ;;
+        gentoo) INSTALL_GENTOO=true ;;
     esac
 done
 
@@ -710,15 +747,16 @@ case $desktop_choice in
     22) DN="Wayfire" ;;       23) DN="Herbstluftwm" ;;    24) DN="dwm" ;;
     25) DN="awesome" ;;       26) DN="spectrwm" ;;        27) DN="LXDE" ;;
     28) DN="Pantheon" ;;      29) DN="Plasma Mobile" ;;
-    30) DN="Xorg only" ;;    31) DN="Server" ;;
-    *) DN="None" ;;
+    *) DN="Unknown" ;;
 esac
+case "$USE_CUSTOM_DM" in true) DMN="$CUSTOM_DM_SVC" ;; *) DMN="built-in greeter" ;; esac
 case $aur_helper in 1) AN="yay" ;; 2) AN="paru" ;; *) AN="none" ;; esac
 case $gpu_choice in
     1) GN="NVIDIA Modern" ;; 2) GN="NVIDIA Legacy" ;;
     3) GN="AMD" ;;           4) GN="Intel" ;; 5) GN="VM/None" ;;
 esac
 case $net_choice in 1) NN="NetworkManager" ;; 2) NN="iwd" ;; esac
+case $priv_choice in 1) PRIVN="sudo" ;; 2) PRIVN="doas (opendoas)" ;; esac
 case $nix_choice in 1) NIXN="yes" ;; *) NIXN="no" ;; esac
 case $audio_choice in 1) AUDN="Pipewire" ;; 2) AUDN="Pulseaudio" ;; esac
 
@@ -754,9 +792,11 @@ SUM="
   Layout     $LAYOUT
   Audio      $AUDN
   Desktop    $DN
+  Disp Mgr   $DMN
   AUR        $AN
   GPU        $GN
   Network    $NN
+  Priv Esc   $PRIVN
   Nix        $NIXN
   Swap       $SWAPN
   Subspace   $SUBSPACE_SUMMARY
@@ -886,8 +926,11 @@ FS_TOOLS=""
 [[ "$FS_TYPE" == "f2fs" ]]     && FS_TOOLS="f2fs-tools"
 [[ "$FS_TYPE" == "bcachefs" ]] && FS_TOOLS="bcachefs-tools"
 
+PRIV_PKG="sudo"
+[[ "$priv_choice" == "2" ]] && PRIV_PKG="opendoas"
+
 pacstrap /mnt base "$KERNEL_PKG" "$KERNEL_HEADERS" linux-firmware \
-    sudo fastfetch plymouth $NET_PKG base-devel git dkms \
+    "$PRIV_PKG" fastfetch plymouth $NET_PKG base-devel git dkms \
     $FS_TOOLS $EXTRA_PKGS
 
 # Generate FSTAB (Crucial for Btrfs subvolumes)
@@ -970,8 +1013,8 @@ mkdir -p /mnt/usr/share/pixmaps
 cp /usr/share/pixmaps/zerene.svg /mnt/usr/share/pixmaps/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
-mkdir -p /mnt/usr/share/backgrounds/ù
-cp -r /usr/share/backgrounds /mnt/usr/share/backgrounds/ 2>/dev/null || true
+mkdir -p /mnt/usr/share/wallpapers-zerene/
+cp -r /usr/share/wallpapers-zerene /mnt/usr/share 2>/dev/null || true
 
 ok "assets copied"
 
@@ -1024,7 +1067,27 @@ echo "root:$password" | chpasswd
 if [ ! -f /etc/sudoers ]; then touch /etc/sudoers; chmod 440 /etc/sudoers; fi
 if ! grep -q "^%wheel" /etc/sudoers; then echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers; fi
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
-echo "  > users configured"
+
+# privilege escalation
+if [[ "$priv_choice" == "2" ]]; then
+    # doas (opendoas) - create doas.conf allowing wheel group
+    cat > /etc/doas.conf <<DOASCONF
+permit persist keepenv :wheel
+DOASCONF
+    chmod 0400 /etc/doas.conf
+    chown root:root /etc/doas.conf
+    # create a sudo shim so scripts that call sudo still work
+    if ! command -v sudo &>/dev/null; then
+        cat > /usr/local/bin/sudo <<'SUDOSHIM'
+#!/bin/sh
+exec doas "$@"
+SUDOSHIM
+        chmod +x /usr/local/bin/sudo
+    fi
+    echo "  > doas configured for wheel group"
+else
+    echo "  > sudo configured for wheel group"
+fi
 
 # nix
 if [[ "$INSTALL_NIX" == "true" ]]; then
@@ -1093,23 +1156,35 @@ echo ""
 case "$gpu_choice" in
     1)
         # nvidia modern - rtx/turing/4060 etc
+        # install kernel headers first so dkms can build the module
+        pacman -S --noconfirm "$KERNEL_HEADERS"
+
         # install nvidia-dkms, utils, settings
         pacman -S --noconfirm nvidia-dkms nvidia-utils nvidia-settings \
             lib32-nvidia-utils libglvnd lib32-libglvnd opencl-nvidia
 
-        # dkms builds the module for the installed kernel
-        echo "  > running dkms autoinstall..."
+        # run dkms build explicitly for the running kernel
+        echo "  > building nvidia dkms module for current kernel..."
         dkms autoinstall
 
-        # add nvidia modules to initramfs before rebuild
-        sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
+        # verify the modules were actually built before touching mkinitcpio
+        KVER=\$(uname -r)
+        if find /usr/lib/modules/\$KVER -name "nvidia.ko*" 2>/dev/null | grep -q .; then
+            echo "  > nvidia modules confirmed, patching mkinitcpio..."
+            # add nvidia modules to initramfs before rebuild
+            sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
 
-        # kms hook conflicts with nvidia early loading - causes black screen on wayland
-        sed -i 's/ kms//' /etc/mkinitcpio.conf
+            # kms hook conflicts with nvidia early loading - causes black screen on wayland
+            sed -i 's/ kms//' /etc/mkinitcpio.conf
 
-        # rebuild initramfs with the nvidia modules in it
-        echo "  > rebuilding initramfs..."
-        mkinitcpio -P
+            # rebuild initramfs with the nvidia modules in it
+            echo "  > rebuilding initramfs..."
+            mkinitcpio -P
+        else
+            echo "  > WARNING: nvidia dkms modules not found in /usr/lib/modules/\$KVER"
+            echo "  > skipping early KMS module injection (will load at runtime instead)"
+            echo "  > you can run: dkms autoinstall && mkinitcpio -P after reboot if needed"
+        fi
 
         # blacklist nouveau so it cant load and fight nvidia
         echo "blacklist nouveau" > /etc/modprobe.d/blacklist-nouveau.conf
@@ -1133,7 +1208,7 @@ NVHOOK
         ;;
     2)
         # nvidia legacy - pascal gtx 10xx and older, aur only since driver 590
-        pacman -S --noconfirm git base-devel
+        pacman -S --noconfirm git base-devel "$KERNEL_HEADERS"
         cd /tmp
         git clone https://aur.archlinux.org/nvidia-580xx-dkms.git
         chown -R "$username:$username" /tmp/nvidia-580xx-dkms
@@ -1142,9 +1217,14 @@ NVHOOK
         cd /
         pacman -S --noconfirm nvidia-utils lib32-nvidia-utils libglvnd lib32-libglvnd
         dkms autoinstall
-        sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
-        sed -i 's/ kms//' /etc/mkinitcpio.conf
-        mkinitcpio -P
+        KVER=\$(uname -r)
+        if find /usr/lib/modules/\$KVER -name "nvidia.ko*" 2>/dev/null | grep -q .; then
+            sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
+            sed -i 's/ kms//' /etc/mkinitcpio.conf
+            mkinitcpio -P
+        else
+            echo "  > WARNING: nvidia legacy dkms modules not found, skipping mkinitcpio nvidia injection"
+        fi
         echo "blacklist nouveau" > /etc/modprobe.d/blacklist-nouveau.conf
         echo "options nouveau modeset=0" >> /etc/modprobe.d/blacklist-nouveau.conf
         ;;
@@ -1184,26 +1264,42 @@ esac
 echo ""
 echo -e "\033[38;2;5;4;216m  ──  Desktop  ──\033[0m"
 echo ""
+
+# install display manager packages if user selected one
+if [[ "$USE_CUSTOM_DM" == "true" ]]; then
+    pacman -S --noconfirm $CUSTOM_DM_PKG
+fi
+
 case $desktop_choice in
     1)  pacman -S --noconfirm hyprland kitty greetd greetd-tuigreet; systemctl enable greetd ;;
-    2)  pacman -S --noconfirm plasma-desktop sddm konsole dolphin plasma-wayland-session; systemctl enable sddm ;;
-    3)  pacman -S --noconfirm xfce4 xfce4-goodies gvfs lightdm lightdm-gtk-greeter xfce4-terminal; systemctl enable lightdm ;;
-    4)  pacman -S --noconfirm gnome gnome-tweaks gdm; systemctl enable gdm ;;
+    2)  pacman -S --noconfirm plasma-desktop konsole dolphin plasma-wayland-session
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm sddm; systemctl enable sddm; } ;;
+    3)  pacman -S --noconfirm xfce4 xfce4-goodies gvfs xfce4-terminal
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    4)  pacman -S --noconfirm gnome gnome-tweaks
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm gdm; systemctl enable gdm; } ;;
     5)  pacman -S --noconfirm sway swaybar swaybg swaylock foot greetd greetd-tuigreet; systemctl enable greetd ;;
-    6)  pacman -S --noconfirm i3-wm i3status i3lock dmenu rxvt-unicode lightdm lightdm-gtk-greeter; systemctl enable lightdm ;;
-    7)  pacman -S --noconfirm cinnamon lightdm lightdm-gtk-greeter gnome-terminal; systemctl enable lightdm ;;
-    8)  pacman -S --noconfirm mate mate-extra lightdm lightdm-gtk-greeter mate-terminal; systemctl enable lightdm ;;
-    9)  pacman -S --noconfirm lxqt sddm breeze-icons qterminal; systemctl enable sddm ;;
-    10) pacman -S --noconfirm budgie-desktop lightdm lightdm-gtk-greeter gnome-terminal; systemctl enable lightdm ;;
-    11) pacman -S --noconfirm deepin deepin-extra lightdm lightdm-gtk-greeter; systemctl enable lightdm ;;
-    12) pacman -S --noconfirm openbox obconf lxappearance lightdm lightdm-gtk-greeter rxvt-unicode; systemctl enable lightdm ;;
-    13) pacman -S --noconfirm bspwm sxhkd dmenu lightdm lightdm-gtk-greeter rxvt-unicode; systemctl enable lightdm ;;
-    14) pacman -S --noconfirm qtile python-psutil lightdm lightdm-gtk-greeter alacritty; systemctl enable lightdm ;;
+    6)  pacman -S --noconfirm i3-wm i3status i3lock dmenu rxvt-unicode
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    7)  pacman -S --noconfirm cinnamon gnome-terminal
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    8)  pacman -S --noconfirm mate mate-extra mate-terminal
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    9)  pacman -S --noconfirm lxqt breeze-icons qterminal
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm sddm; systemctl enable sddm; } ;;
+    10) pacman -S --noconfirm budgie-desktop gnome-terminal
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    11) pacman -S --noconfirm deepin deepin-extra
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    12) pacman -S --noconfirm openbox obconf lxappearance rxvt-unicode
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    13) pacman -S --noconfirm bspwm sxhkd dmenu rxvt-unicode
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    14) pacman -S --noconfirm qtile python-psutil alacritty
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
     15) pacman -S --noconfirm cosmic-session; systemctl enable cosmic-greeter ;;
     16)
-        # windowmaker - classic nextstep/openstep look and feel from the 90s
-        pacman -S --noconfirm windowmaker wmaker-crm libwraster lightdm lightdm-gtk-greeter xterm
-        # set wmaker as the session for lightdm
+        pacman -S --noconfirm windowmaker wmaker-crm libwraster xterm
         mkdir -p /usr/share/xsessions
         cat > /usr/share/xsessions/wmaker.desktop <<WMDT
 [Desktop Entry]
@@ -1211,44 +1307,25 @@ Name=WindowMaker
 Exec=wmaker
 Type=Application
 WMDT
-        systemctl enable lightdm ;;
-    17)
-        # fluxbox - fast and minimal, tabbed window management, great for old hardware
-        pacman -S --noconfirm fluxbox feh rofi lightdm lightdm-gtk-greeter xterm
-        systemctl enable lightdm ;;
-    18)
-        # icewm - ultra lightweight wm with a taskbar, very low resource usage
-        pacman -S --noconfirm icewm icewm-themes feh lightdm lightdm-gtk-greeter xterm
-        systemctl enable lightdm ;;
-    19)
-        # enlightenment e26 - compositing wm with effects, unique shelf-based de
-        pacman -S --noconfirm enlightenment terminology lightdm lightdm-gtk-greeter
-        systemctl enable lightdm ;;
-    20)
-        # niri - scrollable-tiling wayland compositor, workspaces scroll left/right
-        pacman -S --noconfirm niri foot greetd greetd-tuigreet
-        systemctl enable greetd ;;
-    21)
-        # river - dynamic tiling wayland compositor inspired by dwm
-        pacman -S --noconfirm river foot waybar greetd greetd-tuigreet
-        systemctl enable greetd ;;
-    22)
-        # wayfire - wayland compositor with a plugin system and 3d cube effects
-        pacman -S --noconfirm wayfire wcm wf-shell foot greetd greetd-tuigreet
-        systemctl enable greetd ;;
-    23)
-        # herbstluftwm - manual tiling wm controlled entirely via ipc commands
-        pacman -S --noconfirm herbstluftwm dmenu rxvt-unicode lightdm lightdm-gtk-greeter
-        systemctl enable lightdm ;;
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    17) pacman -S --noconfirm fluxbox feh rofi xterm
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    18) pacman -S --noconfirm icewm icewm-themes feh xterm
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    19) pacman -S --noconfirm enlightenment terminology
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    20) pacman -S --noconfirm niri foot greetd greetd-tuigreet; systemctl enable greetd ;;
+    21) pacman -S --noconfirm river foot waybar greetd greetd-tuigreet; systemctl enable greetd ;;
+    22) pacman -S --noconfirm wayfire wcm wf-shell foot greetd greetd-tuigreet; systemctl enable greetd ;;
+    23) pacman -S --noconfirm herbstluftwm dmenu rxvt-unicode
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
     24)
-        # dwm - suckless dynamic wm, minimal by design, customized via patched source
         pacman -S --noconfirm xorg-server xorg-xinit base-devel libx11 libxinerama libxft
         cd /tmp
         git clone https://git.suckless.org/dwm
         cd dwm
         make install
         cd /
-        # create xinitrc and xsession entry so lightdm can launch it
         echo "exec dwm" > /home/$username/.xinitrc
         chown $username:$username /home/$username/.xinitrc
         mkdir -p /usr/share/xsessions
@@ -1258,65 +1335,18 @@ Name=dwm
 Exec=dwm
 Type=Application
 DWMDT
-        pacman -S --noconfirm lightdm lightdm-gtk-greeter st dmenu
-        systemctl enable lightdm ;;
-    25)
-        # awesome - lua-configured tiling wm, very extensible with widgets
-        pacman -S --noconfirm awesome vicious lua lightdm lightdm-gtk-greeter alacritty
-        systemctl enable lightdm ;;
-    26)
-        # spectrwm - minimalist tiling wm inspired by xmonad and dwm, bsd roots
-        pacman -S --noconfirm spectrwm dmenu rxvt-unicode lightdm lightdm-gtk-greeter
-        systemctl enable lightdm ;;
-    27)
-        # lxde - the lightest full desktop environment, uses gtk2 and openbox under the hood
-        pacman -S --noconfirm lxde lxappearance lightdm lightdm-gtk-greeter
-        systemctl enable lightdm ;;
-    28)
-        # pantheon - elementary os desktop shell, clean and mac-like
-        pacman -S --noconfirm pantheon-session lightdm lightdm-pantheon-greeter
-        systemctl enable lightdm ;;
-    29)
-        # plasma mobile - kde mobile shell for touch devices and phones
-        pacman -S --noconfirm plasma-mobile sddm
-        systemctl enable sddm ;;
-    30)
-        # Xorg only - minimal X without a full desktop/window manager
-        pacman -S --noconfirm xorg-server xorg-xauth xorg-xinit xterm \
-            xf86-video-vesa xrdb xsetroot xclock
-        # minimal X session - just X with a terminal
-        cat > /home/$username/.xinitrc <<'XSESSION'
-#!/bin/sh
-xrdb -merge ~/.Xresources
-xsetroot -solid "#0504D8"
-xterm &
-exec xterm
-XSESSION
-        chmod +x /home/$username/.xinitrc
-        chown $username:$username /home/$username/.xinitrc
-        # minimal xsession desktop entry so login managers can start X
-        mkdir -p /usr/share/xsessions
-        cat > /usr/share/xsessions/xorg-only.desktop <<'XORGDT'
-[Desktop Entry]
-Name=Xorg Only
-Comment=Minimal X without desktop environment
-Exec=/home/$username/.xinitrc
-Type=Application
-XORGDT
-        # install lightdm as display manager so user can login to X
-        pacman -S --noconfirm lightdm lightdm-gtk-greeter
-        systemctl enable lightdm
-        echo "  > xorg-only installed (minimal X, no desktop)"
-        ;;
-    31)
-        # Server - headless, no GPU, optimized for server/workstation use
-        # No graphics packages - just the essentials
-        pacman -S --noconfirm openssh htop tmux wget curl rsync \
-            sudo vim polkit
-        systemctl enable sshd
-        # For server, we skip display manager entirely
-        echo "  > server configuration applied"
-        ;;
+        pacman -S --noconfirm st dmenu
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    25) pacman -S --noconfirm awesome vicious lua alacritty
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    26) pacman -S --noconfirm spectrwm dmenu rxvt-unicode
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    27) pacman -S --noconfirm lxde lxappearance
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
+    28) pacman -S --noconfirm pantheon-session
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-pantheon-greeter; systemctl enable lightdm; } ;;
+    29) pacman -S --noconfirm plasma-mobile
+        [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm sddm; systemctl enable sddm; } ;;
 esac
 
 echo ""
@@ -1521,8 +1551,63 @@ ALPINE
     echo "  > Alpine subspace installed"
 fi
 
+if [[ "$INSTALL_GENTOO" == "true" ]]; then
+    header "Installing gentoo Subspace"
 
-if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" ]]; then
+    step "Installing dependencies"
+    pacman -S --noconfirm tar curl xorg-xhost
+
+    step "Bootstrapping Gentoo"
+    # Create the subspace and the dedicated workspace
+    mkdir -p /subspace/gentoo
+    mkdir -p /tempo/gentoo-workspace
+
+    # Download: Save it with a specific filename inside your tempo path
+    curl -L "https://mirrors.kernel.org/gentoo/releases/amd64/autobuilds/20260419T164601Z/stage3-amd64-desktop-openrc-20260419T164601Z.tar.xz" \
+         -o /tempo/gentoo-workspace/gentoo.tar.xz
+
+    # Extract: Point to that specific filename
+    tar -xf "/tempo/gentoo-workspace/gentoo.tar.xz" -C /subspace/gentoo
+
+    # Clean up: Remove the workspace directory and everything inside it
+    rm -rf "/tempo"
+
+    # CRITICAL: Fix DNS so 'apk' works inside the subspace
+    cp /etc/resolv.conf /subspace/gentoo/etc/resolv.conf
+
+    if [ ! -d "/subspace/gentoo/usr" ]; then
+        echo "ERROR: Gentoo subspace installation failed"
+        exit 1
+    fi
+
+    step "Creating launcher script"
+    cat > /usr/local/bin/subspace-gentoo <<'GENTOO'
+#!/bin/bash
+xhost +local: > /dev/null 2>&1
+
+# not when the installer creates it.
+if [ -n "\$DISPLAY" ]; then
+    sudo systemd-nspawn -q -D /subspace/gentoo \
+        --bind-ro=/etc/resolv.conf \
+        --bind-ro=/tmp/.X11-unix \
+        --bind=/dev/dri \
+        --setenv=DISPLAY=\$DISPLAY \
+        /bin/sh
+else
+    sudo systemd-nspawn -q -D /subspace/gentoo /bin/sh
+fi
+GENTOO
+
+
+    chmod +x /usr/local/bin/subspace-gentoo
+
+    echo "alias gentoo='/usr/local/bin/subspace-gentoo'" >> "/home/$username/.bashrc"
+
+    echo "  > Gentoo subspace installed"
+fi
+
+
+if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" && "$INSTALL_GENTOO" == "false" ]]; then
     echo "  > no subspaces selected"
 fi
 
