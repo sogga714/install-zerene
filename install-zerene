@@ -715,7 +715,7 @@ header "Subspaces"
 # MULTI-SELECT: Use checklist to allow selecting multiple subspaces
 subspace_selections=$(tui_checklist "Linux Subspaces" "Optional: Select additional distros subsystems to install alongside zerene\n\nSelect one or more (Press Space to toggle):" \
     "debian" "Debian      - Debian stable workspace" OFF \
-    "gentoo" "Void Linux  - Void lightweight workspace " OFF \
+    "gentoo" "Gentoo Linux  - Gentoo lightweight workspace " OFF \
     "alpine" "Alpine       - Alpine lightweight workspace" OFF ) || err "cancelled"
 
 # Clear previous subspace flags
