@@ -323,9 +323,10 @@ kernel_choice=$(tui_menu "Kernel" "$KERN_PROMPT" \
     "2" "linux-zen      - lower latency, better for gaming/desktop" \
     "3" "linux-hardened - security hardened" \
     "4" "linux-lts      - long term support, older but very stable" \
-    "5" "auto-tune      - zerene picks best kernel + tunes for your hw" \
-    "6" "auto-config   - generate .config based on your specs" \
-    "7" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled"
+    "5" "linux-cachyos  - best option for gaming (requires cachyos repo)" \
+    "6" "auto-tune      - zerene picks best kernel + tunes for your hw" \
+    "7" "auto-config   - generate .config based on your specs" \
+    "8" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled"
 
 KERNEL_PKG="linux"
 KERNEL_HEADERS="linux-headers"
@@ -340,7 +341,8 @@ case "$kernel_choice" in
     2) KERNEL_PKG="linux-zen";      KERNEL_HEADERS="linux-zen-headers" ;;
     3) KERNEL_PKG="linux-hardened"; KERNEL_HEADERS="linux-hardened-headers" ;;
     4) KERNEL_PKG="linux-lts";      KERNEL_HEADERS="linux-lts-headers" ;;
-    5)
+    5) KERNEL_PKG="linux-cachyos";      KERNEL_HEADERS="linux-cachyos-headers" ;;
+    6)
         AUTO_TUNE=true
         if   [[ "$IS_VM" == "true" ]]; then
             KERNEL_PKG="linux";     KERNEL_HEADERS="linux-headers"
@@ -363,7 +365,7 @@ case "$kernel_choice" in
         [[ "$IS_LAPTOP" == "true" ]] && KERN_PARAMS="$KERN_PARAMS pcie_aspm=force nmi_watchdog=0"
         [[ "$RAM_MB" -lt 4096 ]] && SWAPPINESS=30 || SWAPPINESS=10
         ;;
-    6)
+    7)
         # auto-config - generate .config based on detected hardware
         AUTO_CONFIG=true
         KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
@@ -539,7 +541,7 @@ CONFIG_PREEMPT=y
 CONFIG_PREEMPT_VOLUNTARY=y
 "
         ;;
-    7)
+    8)
         ADVANCED_KERNEL=true
         KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
         kconfig_method=$(tui_menu "Kernel Config" "Choose your config method:" \
@@ -592,7 +594,8 @@ desktop_choice=$(tui_menu "Desktop Environment" "Select your desktop environment
     "26" "spectrwm      minimalist bsd-style tiling" \
     "27" "LXDE          lightest full de, gtk2" \
     "28" "Pantheon      elementary os desktop" \
-    "29" "Plasma Mobile kde mobile shell") || err "cancelled"
+    "29" "Plasma Mobile kde mobile shell" \
+    "30" "None") || err "cancelled"
 
 # ask about display manager / greeter after DE selection
 # wayland compositors that have their own greeter skip this
@@ -714,24 +717,32 @@ header "Subspaces"
 
 # MULTI-SELECT: Use checklist to allow selecting multiple subspaces
 subspace_selections=$(tui_checklist "Linux Subspaces" "Optional: Select additional distros subsystems to install alongside zerene\n\nSelect one or more (Press Space to toggle):" \
-    "debian" "Debian      - Debian stable workspace" OFF \
-    "gentoo" "Gentoo Linux  - Gentoo lightweight workspace " OFF \
-    "alpine" "Alpine       - Alpine lightweight workspace" OFF ) || err "cancelled"
+    "debian" "Debian       - Debian stable workspace" OFF \
+    "alpine" "Alpine       - Alpine lightweight workspace" OFF \
+    "gentoo" "Gentoo Linux - Gentoo optimised workspace" OFF \
+    "void"   "Void Linux   - Void lightweight workspace"  OFF \
+    "fedora" "Fedora Linux - Fedora stable workspace" OFF \
+    "opensuse" "Opensuse    - Opensuse stable workspace" OFF  ) || err "cancelled"
 
 # Clear previous subspace flags
 INSTALL_DEBIAN=false
 INSTALL_ALPINE=false
 INSTALL_GENTOO=false
+INSTALL_VOID=false
+INSTALL_FEDORA=false
+INSTALL_OPENSUSE=false
 
 # Parse selections and set flags
 for choice in $(echo "$subspace_selections" | tr -d '"'); do
     case "$choice" in
         debian) INSTALL_DEBIAN=true ;;
-        alpine)  INSTALL_ALPINE=true ;;
+        alpine) INSTALL_ALPINE=true ;;
         gentoo) INSTALL_GENTOO=true ;;
+        void)   INSTALL_VOID=true ;;   
+        fedora) INSTALL_FEDORA=true ;;
+        opensuse) INSTALL_OPENSUSE=true ;;
     esac
 done
-
 # --------------------------------------------------------
 # readable names for summary
 # --------------------------------------------------------
@@ -746,7 +757,7 @@ case $desktop_choice in
     19) DN="Enlightenment" ;;  20) DN="Niri" ;;            21) DN="River" ;;
     22) DN="Wayfire" ;;       23) DN="Herbstluftwm" ;;    24) DN="dwm" ;;
     25) DN="awesome" ;;       26) DN="spectrwm" ;;        27) DN="LXDE" ;;
-    28) DN="Pantheon" ;;      29) DN="Plasma Mobile" ;;
+    28) DN="Pantheon" ;;      29) DN="Plasma Mobile" ;; 30) DN="Unknown"
     *) DN="Unknown" ;;
 esac
 case "$USE_CUSTOM_DM" in true) DMN="$CUSTOM_DM_SVC" ;; *) DMN="built-in greeter" ;; esac
@@ -765,6 +776,9 @@ SUBSPACE_SUMMARY=""
 [[ "$INSTALL_DEBIAN" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Debian"
 [[ "$INSTALL_ALPINE" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Alpine"
 [[ "$INSTALL_GENTOO" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Gentoo"
+[[ "$INSTALL_VOID" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Void"
+[[ "$INSTALL_FEDORA" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Fedora"
+[[ "$INSTALL_OPENSUSE" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Opensuse"
 [[ -z "$SUBSPACE_SUMMARY" ]] && SUBSPACE_SUMMARY="none"
 
 header "Additional Packages"
@@ -813,9 +827,11 @@ tui_yesno "Confirm Installation" "$SUM" || err "cancelled"
 
 # partitioning
 clear
-echo -e "${BLUE}${BOLD}    zerene os  ·  installing...  ·  TEST${RESET}"
-echo
-rule
+
+echo "--------------------------"
+figlet Installing MAINSYS
+echo "--------------------------"
+
 
 if [[ "$FORMAT_DISK" == "true" || "$SPLIT_DISK" == "true" ]]; then
     step "Partitioning $TARGET_DISK ($FS_TYPE, $BOOT_MODE)"
@@ -882,17 +898,15 @@ if [[ "$FS_TYPE" == "btrfs" ]]; then
     mount "${TARGET_DISK}${P}2" /mnt
     btrfs subvolume create /mnt/@
     btrfs subvolume create /mnt/@home
+    btrfs subvolume create /mnt/@snapshots
     umount /mnt
 
     step "Mounting Btrfs Subvolumes"
     # Mount with zstd compression to help that HDD speed
     mount -o noatime,compress=zstd,subvol=@ "${TARGET_DISK}${P}2" /mnt
-    if [[ "$BOOT_MODE" == "uefi" ]]; then
-        mkdir -p /mnt/{boot/efi,home}
-    else
-        mkdir -p /mnt/{boot/efi,home}
-    fi
+    mkdir -p /mnt/{boot/efi,home,.snapshots}
     mount -o noatime,compress=zstd,subvol=@home "${TARGET_DISK}${P}2" /mnt/home
+    mount -o noatime,compress=zstd,subvol=@snapshots "${TARGET_DISK}${P}2" /mnt/.snapshots
 else
     step "Mounting $FS_TYPE Partition"
     mount "${TARGET_DISK}${P}2" /mnt
@@ -1003,10 +1017,13 @@ KEDIT
     esac
 fi
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Assets  ──\033[0m"
-echo ""
 clear
+
+echo "--------------------------"
+figlet Assets
+echo "--------------------------"
+
+
 mkdir -p /mnt/etc/fastfetch
 [ -d /etc/fastfetch ] && cp -r /etc/fastfetch/* /mnt/etc/fastfetch/
 mkdir -p /mnt/usr/share/pixmaps
@@ -1021,15 +1038,13 @@ ok "assets copied"
 # --------------------------------------------------------
 # chroot
 # --------------------------------------------------------
-
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Installing main sys.  ──\033[0m"
-echo ""
-sleep 3
-clear 
+echo "--------------------------"
+figlet Installing Zerene OS
+echo "--------------------------"
 
 arch-chroot /mnt bash <<EOF
 
+pacman -S --noconfirm figlet
 echo "$hostname" > /etc/hostname
 echo "KEYMAP=$LAYOUT" > /etc/vconsole.conf
 
@@ -1042,7 +1057,7 @@ Section "InputClass"
 EndSection
 XKEYBOARD
 
-cat > /etc/os-release <<OS
+cat > /etc/os-release <<'OS'
 NAME="Zerene OS"
 PRETTY_NAME="Zerene OS (Xenovia 2)"
 ID=zerene
@@ -1050,11 +1065,13 @@ ID_LIKE=arch
 ANSI_COLOR="38;2;5;4;216"
 LOGO=zerene
 OS
+
 echo 'GRUB_DISTRIBUTOR="Zerene OS"' >> /etc/default/grub
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Users & Groups  ──\033[0m"
-echo ""
+echo "--------------------------"
+figlet Users / Groups
+echo "--------------------------"
+
 groupadd -r -g 970 nixbld 2>/dev/null || true
 groupadd -r nix-users 2>/dev/null || true
 for n in \$(seq -w 01 10); do
@@ -1089,7 +1106,12 @@ else
     echo "  > sudo configured for wheel group"
 fi
 
-# nix
+clear
+
+echo "--------------------------"
+figlet Nix Packages
+echo "--------------------------"
+
 if [[ "$INSTALL_NIX" == "true" ]]; then
     pacman -S --noconfirm nix
     mkdir -p /nix/{store,var/nix/db,var/nix/profiles,var/nix/channel-cache}
@@ -1115,7 +1137,10 @@ NIX
     nix-channel --update || echo "Channel update failed (expected in chroot), will finish on reboot."
 fi
 
-# fastfetch
+echo "--------------------------"
+figlet Fastfetch
+echo "--------------------------"
+
 mkdir -p /home/$username/.config/fastfetch
 cat > /home/$username/.config/fastfetch/config.jsonc <<FF
 {
@@ -1141,18 +1166,25 @@ FF
 echo "fastfetch" >> /home/$username/.bashrc
 chown -R $username:$username /home/$username
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Audio  ──\033[0m"
-echo ""
+clear
+
+echo "--------------------------"
+figlet Audio
+echo "--------------------------"
+
+
 if [ "$audio_choice" == "1" ]; then
     pacman -S --noconfirm pipewire pipewire-pulse wireplumber
 else
     pacman -S --noconfirm pulseaudio
 fi
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  GPU Drivers  ──\033[0m"
-echo ""
+clear
+
+echo "--------------------------"
+figlet GPU Drivers
+echo "--------------------------"
+
 case "$gpu_choice" in
     1)
         # nvidia modern - rtx/turing/4060 etc
@@ -1242,9 +1274,13 @@ NVHOOK
         ;;
 esac
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Network  ──\033[0m"
-echo ""
+clear
+
+echo "--------------------------"
+figlet Network
+echo "--------------------------"
+
+
 case "$net_choice" in
     1) systemctl enable NetworkManager ;;
     2)
@@ -1261,9 +1297,11 @@ IWDCONF
         ;;
 esac
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Desktop  ──\033[0m"
-echo ""
+clear
+
+echo "--------------------------"
+figlet Desktop
+echo "--------------------------"
 
 # install display manager packages if user selected one
 if [[ "$USE_CUSTOM_DM" == "true" ]]; then
@@ -1345,13 +1383,16 @@ DWMDT
         [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-gtk-greeter; systemctl enable lightdm; } ;;
     28) pacman -S --noconfirm pantheon-session
         [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm lightdm lightdm-pantheon-greeter; systemctl enable lightdm; } ;;
-    29) pacman -S --noconfirm plasma-mobile
+    29) pacman -S --noconfirm plasma-mobile konsole
         [[ "$USE_CUSTOM_DM" == "true" ]] && systemctl enable $CUSTOM_DM_SVC || { pacman -S --noconfirm sddm; systemctl enable sddm; } ;;
 esac
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  AUR Helper  ──\033[0m"
-echo ""
+clear
+
+echo "--------------------------"
+figlet Aur Helper
+echo "--------------------------"
+
 case $aur_helper in
     1|2)
         helper=\$([[ "$aur_helper" == "1" ]] && echo "yay" || echo "paru")
@@ -1367,9 +1408,11 @@ case $aur_helper in
         ;;
 esac
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Kernel Tuning  ──\033[0m"
-echo ""
+clear
+
+echo "--------------------------"
+figlet Kernel Tuning
+echo "--------------------------"
 
 GRUB_EXTRAS="quiet splash audit=0"
 [[ "$gpu_choice" == "1" || "$gpu_choice" == "2" ]] && GRUB_EXTRAS="\$GRUB_EXTRAS nvidia_drm.modeset=1"
@@ -1449,9 +1492,10 @@ fi
 
 clear 
 
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Subspaces  ──\033[0m"
-echo ""
+echo "--------------------------"
+figlet Subspaces
+echo "--------------------------"
+
 
 if [[ "$INSTALL_DEBIAN" == "true" ]]; then
     header "Installing Debian Subspace"
@@ -1572,9 +1616,9 @@ if [[ "$INSTALL_GENTOO" == "true" ]]; then
     # Clean up: Remove the workspace directory and everything inside it
     rm -rf "/tempo"
 
-    # CRITICAL: Fix DNS so 'apk' works inside the subspace
+    # CRITICAL: Fix DNS so 'emerge' works inside the subspace
     cp /etc/resolv.conf /subspace/gentoo/etc/resolv.conf
-
+-x
     if [ ! -d "/subspace/gentoo/usr" ]; then
         echo "ERROR: Gentoo subspace installation failed"
         exit 1
@@ -1606,24 +1650,185 @@ GENTOO
     echo "  > Gentoo subspace installed"
 fi
 
+if [[ "$INSTALL_VOID" == "true" ]]; then
+    header "Installing Void Subspace"
 
-if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" && "$INSTALL_GENTOO" == "false" ]]; then
+    step "Installing dependencies"
+    pacman -S --noconfirm tar curl xorg-xhost
+
+    step "Bootstrapping Void"
+    # Create the subspace and the dedicated workspace
+    mkdir -p /subspace/void
+    mkdir -p /tempo/void-workspace
+
+    # Download: Save it with a specific filename inside your tempo path
+    curl -L "https://repo-default.voidlinux.org/live/current/void-x86_64-musl-ROOTFS-20250202.tar.xz" \
+         -o /tempo/void-workspace/void.tar.xz
+
+    # Extract: Point to that specific filename
+    tar -xf "/tempo/void-workspace/void.tar.xz" -C /subspace/void
+
+    # Clean up: Remove the workspace directory and everything inside it
+    rm -rf "/tempo"
+
+    # CRITICAL: Fix DNS so 'xbps' works inside the subspace
+    cp /etc/resolv.conf /subspace/void/etc/resolv.conf
+
+    if [ ! -d "/subspace/void/usr" ]; then
+        echo "ERROR: Void subspace installation failed"
+        exit 1
+    fi
+
+    step "Creating launcher script"
+    cat > /usr/local/bin/subspace-void <<'VOID'
+#!/bin/bash
+xhost +local: > /dev/null 2>&1
+
+# not when the installer creates it.
+if [ -n "\$DISPLAY" ]; then
+    sudo systemd-nspawn -q -D /subspace/void \
+        --bind-ro=/etc/resolv.conf \
+        --bind-ro=/tmp/.X11-unix \
+        --bind=/dev/dri \
+        --setenv=DISPLAY=\$DISPLAY \
+        /bin/sh
+else
+    sudo systemd-nspawn -q -D /subspace/void /bin/sh
+fi
+VOID
+
+
+    chmod +x /usr/local/bin/subspace-void
+
+    echo "alias void='/usr/local/bin/subspace-void'" >> "/home/$username/.bashrc"
+
+    echo "  > Void subspace installed"
+fi
+
+if [[ "$INSTALL_FEDORA" == "true" ]]; then
+    header "Installing Fedora Subspace"
+
+    step "Installing dependencies"
+    pacman -S --noconfirm tar curl xorg-xhost xz
+
+    step "Bootstrapping Fedora"
+    mkdir -p /subspace/fedora
+    mkdir -p /tempo/fedora-workspace
+
+    # Download (Using Fedora 44 OCI as requested)
+    curl -L "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Container/x86_64/images/Fedora-Container-Base-Generic-44-1.7.x86_64.oci.tar.xz" \
+         -o /tempo/fedora-workspace/fedora.tar.xz
+
+    # 1. Unpack the OCI container structure first
+    tar -xf "/tempo/fedora-workspace/fedora.tar.xz" -C /subspace/fedora
+
+    # 2. Extract the actual RootFS blob (the largest file)
+    tar -xpf "/subspace/fedora/blobs/sha256/d93cacdefe7f7526297a08879cb444d1eeb526adf9cb7e34ab1f0609759a3044" -C /subspace/fedora --numeric-owner
+
+    # 3. Clean up the OCI metadata and the tempo folder
+    rm -rf /subspace/fedora/blobs /subspace/fedora/index.json /subspace/fedora/oci-layout
+    rm -rf "/tempo"
+
+    # CRITICAL: Fix DNS so 'dnf' works inside the subspace
+    cp /etc/resolv.conf /subspace/fedora/etc/resolv.conf
+
+    if [ ! -d "/subspace/fedora/usr" ]; then
+        echo "ERROR: Fedora subspace installation failed (No OS tree found)"
+        exit 1
+    fi
+
+    step "Creating launcher script"
+    cat > /usr/local/bin/subspace-fedora <<'FEDORA'
+#!/bin/bash
+xhost +local: > /dev/null 2>&1
+
+if [ -n "\$DISPLAY" ]; then
+    sudo systemd-nspawn -q -D /subspace/fedora \
+        --bind-ro=/etc/resolv.conf \
+        --bind-ro=/tmp/.X11-unix \
+        --bind=/dev/dri \
+        --setenv=DISPLAY=\$DISPLAY \
+        /usr/bin/bash
+else
+    sudo systemd-nspawn -q -D /subspace/fedora /usr/bin/bash
+fi
+FEDORA
+
+    chmod +x /usr/local/bin/subspace-fedora
+    echo "alias fedora='/usr/local/bin/subspace-fedora'" >> "/home/$username/.bashrc"
+
+    echo "  > Fedora subspace installed"
+fi
+
+if [[ "$INSTALL_OPENSUSE" == "true" ]]; then
+    header "Installing Opensuse Subspace"
+
+    step "Installing dependencies"
+    pacman -S --noconfirm tar curl xorg-xhost
+
+    step "Bootstrapping Void"
+    # Create the subspace and the dedicated workspace
+    mkdir -p /subspace/opensuse
+    mkdir -p /tempo/opensuse-workspace
+
+    # Download: Save it with a specific filename inside your tempo path
+    curl -L "http://download.opensuse.org/tumbleweed/appliances/opensuse-tumbleweed-image.x86_64-networkd.tar.xz" \
+         -o /tempo/opensuse-workspace/opensuse.tar.xz
+
+    # Extract: Point to that specific filename
+    tar -xf "/tempo/void-workspace/opensuse.tar.xz" -C /subspace/opensuse
+
+    # Clean up: Remove the workspace directory and everything inside it
+    rm -rf "/tempo"
+
+    # CRITICAL: Fix DNS so 'zypper' works inside the subspace
+    cp /etc/resolv.conf /subspace/opensuse/etc/resolv.conf
+
+    if [ ! -d "/subspace/opensuse/usr" ]; then
+        echo "ERROR: Void subspace installation failed"
+        exit 1
+    fi
+
+    step "Creating launcher script"
+    cat > /usr/local/bin/subspace-opensuse <<'OPENSUSE'
+#!/bin/bash
+xhost +local: > /dev/null 2>&1
+
+# not when the installer creates it.
+if [ -n "\$DISPLAY" ]; then
+    sudo systemd-nspawn -q -D /subspace/opensuse \
+        --bind-ro=/etc/resolv.conf \
+        --bind-ro=/tmp/.X11-unix \
+        --bind=/dev/dri \
+        --setenv=DISPLAY=\$DISPLAY \
+        /bin/sh
+else
+    sudo systemd-nspawn -q -D /subspace/opensuse /bin/sh
+fi
+OPENSUSE
+
+
+
+
+
+if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" && "$INSTALL_GENTOO" == "false" && "$INSTALL_VOID" == "false" && "$INSTALL_FEDORA" == "false" && "$INSTALL_OPENSUSE" == "false" ]]; then
     echo "  > no subspaces selected"
 fi
 
 clear
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Generation Engine  ──\033[0m"
-echo ""
+
+echo --------------------------
+figlet Snapshots
+echo --------------------------
+
 
 pacman -S --noconfirm snapper snap-pac grub-btrfs
 
-
-snapper -c root create-config /
+# create snapper config for root (/.snapshots is already mounted)
+snapper -c root create-config / 2>&1 || echo "WARNING: snapper create-config failed, will retry on first boot"
 
 systemctl enable snapper-timeline.timer
 systemctl enable snapper-cleanup.timer
-systemctl enable grub-btrfsd
 
 
 # bash helper
@@ -1661,6 +1866,13 @@ REGEN
 
 chmod 644 /etc/pacman.d/hooks/95-snapper-grub.hook
 
+clear
+
+echo "--------------------------"
+figlet More Kernel stuff
+echo "--------------------------"
+
+
 cat > /etc/zerene-tune.txt <<TUNE
 zerene auto tuning - applied at install 
 
@@ -1676,13 +1888,13 @@ auto-tune:  $AUTO_TUNE
 auto-config: $AUTO_CONFIG
 TUNE
 
-# --------------------------------------------------------
-# bootloader
-# --------------------------------------------------------
 clear
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  Bootloader  ──\033[0m"
-echo ""
+
+echo "--------------------------"
+figlet Bootloader
+echo "--------------------------"
+
+                                                     
 
 if [[ "$BOOT_MODE" == "uefi" ]]; then
     pacman -S --noconfirm grub efibootmgr
@@ -1692,12 +1904,21 @@ else
     grub-install --target=i386-pc "$TARGET_DISK"
 fi
 
+systemctl enable grub-btrfsd
+
 grub-mkconfig -o /boot/grub/grub.cfg
+
+clear
+
+echo "--------------------------"
+figlet Finalizing
+echo "--------------------------"
 
 echo "one last check mate..."
 
 plymouth-set-default-theme -R zerene-spinner
 mkinitcpio -P
+sudo pacman -R --noconfirm figlet
 EOF
 
 step "Unmounting"
@@ -1707,11 +1928,10 @@ ok "done"
 # --------------------------------------------------------
 # finish screen
 # --------------------------------------------------------
-clear
 echo
-echo ""
-echo -e "\033[38;2;5;4;216m  ──  done!  ──\033[0m"
-echo ""
+echo "--------------------------"
+figlet Install finished!
+echo "--------------------------"
 rule
 fastfetch
 echo
