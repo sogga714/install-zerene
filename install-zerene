@@ -3,9 +3,8 @@
 # zerene os installer - xenovia 2 -
 # This is the installer for version Xenovia 2
 
-
-BLUE='\033[38;2;5;4;216m'       # #0504D8 zerene blue
-LBLUE='\033[38;2;100;110;255m'  # lighter blue for accents
+BLUE='\033[38;2;5;4;216m'
+LBLUE='\033[38;2;100;110;255m'
 WHITE='\033[1;37m'
 GRAY='\033[38;2;160;160;180m'
 DIM='\033[2m'
@@ -14,10 +13,8 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 RESET='\033[0m'
 
-# draw a horizontal rule
 rule() { echo -e "${BLUE}$(printf '─%.0s' $(seq 1 60))${RESET}"; }
 
-# section header like archinstall but zerene style
 header() {
     echo
     rule
@@ -26,13 +23,10 @@ header() {
     echo
 }
 
-# status messages
 msg()  { echo -e "${BLUE}  ›${RESET} $1"; }
 ok()   { echo -e "${GREEN}  ✓${RESET} $1"; }
 warn() { echo -e "${RED}  !${RESET} $1"; }
 err()  { echo -e "${RED}  ERROR:${RESET} $1"; exit 1; }
-
-# step label printed before running something visible
 step() { echo -e "\n${BLUE}${BOLD}  ──  $1  ──${RESET}\n"; }
 
 SPIN_PID=""
@@ -63,11 +57,9 @@ spin_stop() {
 trap spin_stop EXIT
 
 # --------------------------------------------------------
-# whiptail wrappers - themed to zerene blue via NEWT_COLORS
+# whiptail theme
 # --------------------------------------------------------
 
-# whiptail reads NEWT_COLORS to theme its dialogs
-# root=blue bg, window=dark, title=bright blue, button=blue
 export NEWT_COLORS='
 root=,black
 window=white,black
@@ -94,9 +86,26 @@ fullscale=brightblue,black
 helpline=black,brightblue
 '
 
+# --------------------------------------------------------
+# navigation system
+# all interactive functions return:
+#   0 = ok / next
+#   1 = go back (user pressed "Back" or ESC)
+#   exits on hard cancel from err()
+# --------------------------------------------------------
+
+GO_BACK=1
+GO_NEXT=0
+
 tui_menu() {
     local title="$1" prompt="$2"; shift 2
-    whiptail --title "  $title  " --menu "$prompt" 22 72 14 "$@" 3>&1 1>&2 2>&3
+    # inject a "← Back" item as the FIRST option
+    local result
+    result=$(whiptail --title "  $title  " --menu "$prompt\n\n[Use arrow keys  ·  Tab to switch  ·  ESC or Back = previous step]" 24 76 15 \
+        "BACK" "← Go back to previous step" "$@" 3>&1 1>&2 2>&3) || return $GO_BACK
+    [[ "$result" == "BACK" ]] && return $GO_BACK
+    echo "$result"
+    return $GO_NEXT
 }
 
 tui_yesno() {
@@ -105,30 +114,41 @@ tui_yesno() {
 
 tui_input() {
     local title="$1" prompt="$2" default="${3:-}"
-    whiptail --title "  $title  " --inputbox "$prompt" 10 62 "$default" 3>&1 1>&2 2>&3
+    local result
+    result=$(whiptail --title "  $title  " --inputbox "$prompt\n\n[ESC = go back]" 12 68 "$default" 3>&1 1>&2 2>&3) || return $GO_BACK
+    echo "$result"
+    return $GO_NEXT
 }
 
 tui_pass() {
-    whiptail --title "  $1  " --passwordbox "$2" 10 62 3>&1 1>&2 2>&3
+    local result
+    result=$(whiptail --title "  $1  " --passwordbox "$2\n\n[ESC = go back]" 12 62 3>&1 1>&2 2>&3) || return $GO_BACK
+    echo "$result"
+    return $GO_NEXT
 }
 
 tui_msg() {
-    whiptail --title "  $1  " --msgbox "$2" 12 62
+    whiptail --title "  $1  " --msgbox "$2" 12 66
 }
 
-# tui_radiolist - styled radiolist for single selection
 tui_radiolist() {
     local title="$1" prompt="$2"; shift 2
-    whiptail --title "  $title  " --radiolist "$prompt" 22 72 14 "$@" 3>&1 1>&2 2>&3
+    local result
+    result=$(whiptail --title "  $title  " --radiolist "$prompt\n\n[ESC = go back]" 24 76 15 \
+        "BACK" "← Go back to previous step" OFF "$@" 3>&1 1>&2 2>&3) || return $GO_BACK
+    [[ "$result" == "BACK" ]] && return $GO_BACK
+    echo "$result"
+    return $GO_NEXT
 }
 
-# tui_checklist - styled checklist for MULTIPLE selection
 tui_checklist() {
     local title="$1" prompt="$2"; shift 2
-    whiptail --title "  $title  " --checklist "$prompt" 22 72 14 "$@" 3>&1 1>&2 2>&3
+    local result
+    result=$(whiptail --title "  $title  " --checklist "$prompt\n\n[ESC = go back  ·  Space = toggle]" 24 76 15 "$@" 3>&1 1>&2 2>&3) || return $GO_BACK
+    echo "$result"
+    return $GO_NEXT
 }
 
-# tui_scrollbox - for displaying generated .config content
 tui_scrollbox() {
     local title="$1" text="$2"
     echo "$text" | whiptail --title "  $title  " --scrollbox 24 80 3>&1 1>&2 2>&3
@@ -155,13 +175,11 @@ echo
 rule
 echo
 
-# check whiptail
 if ! command -v whiptail &>/dev/null; then
     msg "installing whiptail..."
     pacman -S --noconfirm libnewt &>/dev/null
 fi
 
-# internet check
 msg "checking internet..."
 if ! ping -c 1 -W 3 google.com &>/dev/null; then
     tui_msg "No Internet" "No internet connection detected.\n\nOpening nmtui — connect to your network then re-run the installer."
@@ -199,7 +217,6 @@ spin_stop
 
 ok "hardware scanned: ${CPU_MODEL_NAME} · ${CPU_CORES} cores · ${RAM_MB}MB RAM"
 
-# autodetect boot mode - uefi or legacy bios
 if [ -d /sys/firmware/efi/efivars ]; then
     BOOT_MODE="uefi"
     ok "boot mode: UEFI detected"
@@ -210,124 +227,32 @@ fi
 echo
 
 # --------------------------------------------------------
-# configuration - all questions before anything installs
+# step-based navigation engine
+# --------------------------------------------------------
+# Each "step" is a function that returns 0 (done) or 1 (go back).
+# The main loop increments/decrements the step index.
+# Variables are global so going back preserves previous values.
 # --------------------------------------------------------
 
-header "System Identity"
-
-hostname=$(tui_input "Hostname" "Enter a hostname for this machine:" "zerene") || err "cancelled"
-username=$(tui_input "User Account" "Enter your username:") || err "cancelled"
-password=$(tui_pass "User Account" "Enter password:") || err "cancelled"
-password2=$(tui_pass "User Account" "Confirm password:") || err "cancelled"
-[[ "$password" != "$password2" ]] && err "passwords do not match"
-
-header "Privilege Escalation"
-
-priv_choice=$(tui_menu "Privilege Escalation" "Select your privilege escalation tool:" \
-    "1" "sudo      - standard, most compatible (recommended)" \
-    "2" "doas      - minimal, openbsd-style (opendoas)") || err "cancelled"
-
-header "Disk"
-
-DISK_LIST=()
-while IFS= read -r line; do
-    name=$(echo "$line" | awk '{print $1}')
-    size=$(echo "$line" | awk '{print $2}')
-    model=$(echo "$line" | awk '{$1=$2=""; print $0}' | xargs)
-    DISK_LIST+=("$name" "$size  $model")
-done < <(lsblk -dno NAME,SIZE,MODEL | grep -v "loop")
-
-DISK_ID=$(tui_menu "Disk Selection" "Select the disk to install Zerene OS on:" "${DISK_LIST[@]}") || err "cancelled"
-TARGET_DISK="/dev/$DISK_ID"
-[[ $TARGET_DISK == *"nvme"* ]] && P="p" || P=""
-
-if [[ "$TARGET_DISK" == *"nvme"* ]]; then
-    DISK_TYPE="nvme"
-elif [[ "$(cat /sys/block/$(basename $TARGET_DISK)/queue/rotational 2>/dev/null)" == "0" ]]; then
-    DISK_TYPE="ssd"
-fi
-
-if [[ "$DISK_TYPE" == "nvme" ]]; then
-    IO_SCHED_RULE='ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/scheduler}="none"'
-elif [[ "$DISK_TYPE" == "ssd" ]]; then
-    IO_SCHED_RULE='ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"'
-else
-    IO_SCHED_RULE='ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"'
-fi
-
-# get total disk size in GB for slider
-TOTAL_DISK_SIZE=$(lsblk -dno SIZE -b /dev/$DISK_ID | awk '{printf "%.0f", $1/1024/1024/1024}')
-FREE_DISK_SPACE=$TOTAL_DISK_SIZE
-
-# dual boot / disk split option with slider
-header "Disk Option"
-
-disk_option_choice=$(tui_radiolist "Disk Option" "Disk: ${TARGET_DISK} (${TOTAL_DISK_SIZE}GB)\nFree Space: ${FREE_DISK_SPACE}GB\n\nSelect installation method:" \
-    "1" "Format entire disk  - erase everything, single OS" ON \
-    "2" "Split disk       - dual boot with existing OS" OFF) || err "cancelled"
-
-case "$disk_option_choice" in
-    1)
-        FORMAT_DISK=true
-        SPLIT_DISK=false
-        SPLIT_PERCENT=100
-        ;;
-    2)
-        FORMAT_DISK=false
-        SPLIT_DISK=true
-        # slider for split percentage - show current value, default 50%
-        SPLIT_PERCENT=$(whiptail --title "  Disk Split  " --separate-output --radiolist "Disk: ${TARGET_DISK} (${TOTAL_DISK_SIZE}GB)\n\nSelect how much space to allocate to Zerene:\n(Touch Here ↓ to adjust)" 22 72 14 \
-            "25" "25%  (~$(( TOTAL_DISK_SIZE/4 ))GB) - minimal Zerene" OFF \
-            "30" "30%  (~$(( TOTAL_DISK_SIZE*3/10 ))GB)" OFF \
-            "40" "40%  (~$(( TOTAL_DISK_SIZE*2/5 ))GB)" OFF \
-            "50" "50%  (~$(( TOTAL_DISK_SIZE/2 ))GB) - equal split" ON \
-            "60" "60%  (~$(( TOTAL_DISK_SIZE*3/5 ))GB)" OFF \
-            "70" "70%  (~$(( TOTAL_DISK_SIZE*7/10 ))GB)" OFF \
-            "75" "75%  (~$(( TOTAL_DISK_SIZE*3/4 ))GB) - keep other OS" OFF \
-            3>&1 1>&2 2>&3) || err "cancelled"
-        # calculate actual partition sizes
-        ZERENE_SIZE_GB=$(( TOTAL_DISK_SIZE * SPLIT_PERCENT / 100 ))
-        OTHER_SIZE_GB=$(( TOTAL_DISK_SIZE - ZERENE_SIZE_GB ))
-        FREE_DISK_SPACE=$OTHER_SIZE_GB
-        ;;
-esac
-
-# quick format confirmation for non-split
-if [[ "$FORMAT_DISK" == "true" ]]; then
-    tui_yesno "Format Disk" "Wipe and format $TARGET_DISK ?\n\nThis will erase ALL data on this disk." \
-        && FORMAT_DISK=true || FORMAT_DISK=false
-fi
-
-header "Filesystem"
-
-fs_choice=$(tui_menu "Filesystem Format" "Select the filesystem for your root partition:" \
-    "1" "btrfs       - snapshots, compression, subvolumes") || err "cancelled"
-
-case "$fs_choice" in
-    1) FS_TYPE="btrfs" ;;
-    *) FS_TYPE="btrfs" ;;
-esac
-
-header "Nix Package Manager"
-
-nix_choice=$(tui_menu "Nix" "Include Nix package manager?" \
-    "1" "Yes - install Nix (multi-user daemon mode)" \
-    "2" "No  - skip Nix") || err "cancelled"
-
-header "Kernel"
-
-KERN_PROMPT="  CPU:    $CPU_MODEL_NAME\n  Cores:  $CPU_CORES     RAM: ${RAM_MB} MB\n  Disk:   $DISK_TYPE     Laptop: $IS_LAPTOP\n\nSelect a kernel:"
-
-kernel_choice=$(tui_menu "Kernel" "$KERN_PROMPT" \
-    "1" "linux          - stable, default arch kernel" \
-    "2" "linux-zen      - lower latency, better for gaming/desktop" \
-    "3" "linux-hardened - security hardened" \
-    "4" "linux-lts      - long term support, older but very stable" \
-    "5" "linux-cachyos  - best option for gaming (requires cachyos repo)" \
-    "6" "auto-tune      - zerene picks best kernel + tunes for your hw" \
-    "7" "auto-config   - generate .config based on your specs" \
-    "8" "advanced       - you configure it (menuconfig / vim / nano)") || err "cancelled"
-
+# --- defaults ---
+hostname="zerene"
+username=""
+password=""
+priv_choice="1"
+DISK_ID=""
+TARGET_DISK=""
+P=""
+disk_option_choice="1"
+FORMAT_DISK=true
+SPLIT_DISK=false
+SPLIT_PERCENT=50
+ZERENE_SIZE_GB=0
+OTHER_SIZE_GB=0
+FREE_DISK_SPACE=0
+fs_choice="1"
+FS_TYPE="btrfs"
+nix_choice="2"
+kernel_choice="1"
 KERNEL_PKG="linux"
 KERNEL_HEADERS="linux-headers"
 ADVANCED_KERNEL=false
@@ -335,466 +260,663 @@ AUTO_TUNE=false
 AUTO_CONFIG=false
 KERN_PARAMS=""
 AUTO_CONFIG_CONTENT=""
-
-case "$kernel_choice" in
-    1) KERNEL_PKG="linux";          KERNEL_HEADERS="linux-headers" ;;
-    2) KERNEL_PKG="linux-zen";      KERNEL_HEADERS="linux-zen-headers" ;;
-    3) KERNEL_PKG="linux-hardened"; KERNEL_HEADERS="linux-hardened-headers" ;;
-    4) KERNEL_PKG="linux-lts";      KERNEL_HEADERS="linux-lts-headers" ;;
-    5) KERNEL_PKG="linux-cachyos";      KERNEL_HEADERS="linux-cachyos-headers" ;;
-    6)
-        AUTO_TUNE=true
-        if   [[ "$IS_VM" == "true" ]]; then
-            KERNEL_PKG="linux";     KERNEL_HEADERS="linux-headers"
-        elif [[ "$CPU_VENDOR" == "AuthenticAMD" && "$IS_LAPTOP" == "false" ]]; then
-            KERNEL_PKG="linux-zen"; KERNEL_HEADERS="linux-zen-headers"
-        else
-            KERNEL_PKG="linux";     KERNEL_HEADERS="linux-headers"
-        fi
-        # amd tuning
-        if [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
-            if [[ "$CPU_FAMILY" -ge 25 ]] || { [[ "$CPU_FAMILY" -eq 23 ]] && [[ "$CPU_MODEL" -ge 49 ]]; }; then
-                KERN_PARAMS="$KERN_PARAMS amd_pstate=active"
-            fi
-            KERN_PARAMS="$KERN_PARAMS processor.max_cstate=5"
-            [[ "$IS_VM" == "false" ]] && KERN_PARAMS="$KERN_PARAMS spec_store_bypass_disable=prctl spectre_v2=off"
-        fi
-        # intel tuning
-        [[ "$CPU_VENDOR" == "GenuineIntel" && "$CPU_GEN" -ge 6 ]] && KERN_PARAMS="$KERN_PARAMS intel_pstate=active"
-        # laptop extras
-        [[ "$IS_LAPTOP" == "true" ]] && KERN_PARAMS="$KERN_PARAMS pcie_aspm=force nmi_watchdog=0"
-        [[ "$RAM_MB" -lt 4096 ]] && SWAPPINESS=30 || SWAPPINESS=10
-        ;;
-    7)
-        # auto-config - generate .config based on detected hardware
-        AUTO_CONFIG=true
-        KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
-
-        # generate .config content based on hardware detection
-        AUTO_CONFIG_CONTENT="#
-# Zerene auto-generated kernel config based on your hardware (TEST)
-# Generated for: $CPU_MODEL_NAME
-# RAM: ${RAM_MB}MB | Cores: $CPU_CORES | Disk: $DISK_TYPE
-#
-
-# Processor type and features
-CONFIG_64BIT=y
-CONFIG_X86_64=y
-CONFIG_X86=y
-CONFIG_MICROCODE=y
-CONFIG_MICROCODE_AMD=y
-CONFIG_MICROCODE_INTEL=y
-"
-
-        # CPU vendor specific
-        if [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
-            AUTO_CONFIG_CONTENT+="
-# AMD CPU
-CONFIG_AMD=y
-CONFIG_AMD_CPUID=y
-CONFIG_AMD_NB=y
-"
-            if [[ "$CPU_FAMILY" -ge 25 ]]; then
-                AUTO_CONFIG_CONTENT+="CONFIG_AMD_PSTATE=y
-CONFIG_ACPI_CPPC=y
-"
-            fi
-        elif [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
-            AUTO_CONFIG_CONTENT+="
-# Intel CPU
-CONFIG_INTEL=y
-CONFIG_INTEL_TDX=y
-"
-        fi
-
-        # RAM size based config
-        if [[ "$RAM_MB" -gt 16384 ]]; then
-            AUTO_CONFIG_CONTENT+="
-# Large RAM config (>$RAM_MB MB > 16GB)
-CONFIG_NUMA=y
-CONFIG_KMEMCG=y
-CONFIG_MEMCG=y
-CONFIG_BLK_CGROUP_IOPOL=y
-"
-        fi
-        if [[ "$RAM_MB" -lt 4096 ]]; then
-            AUTO_CONFIG_CONTENT+="
-# Low RAM config (<4GB) - enable zswap for better performance
-CONFIG_ZSWAP=y
-CONFIG_ZPOOL=y
-"
-        fi
-
-        # Disk/storage type
-        if [[ "$DISK_TYPE" == "ssd" || "$DISK_TYPE" == "nvme" ]]; then
-            AUTO_CONFIG_CONTENT+="
-# SSD/NVMe optimizations
-CONFIG_BLK_DEV_NVME=y
-CONFIG_NVME_CORE=y
-CONFIG_NVME_MULTIPATH=y
-CONFIG_MQ_DEADLINE=y
-"
-        else
-            AUTO_CONFIG_CONTENT+="
-# HDD optimizations
-CONFIG_BFQ_CGROUP_DEBUG=y
-CONFIG_BFQ_GROUP_IOSCHED=y
-"
-        fi
-
-        # Laptop vs desktop
-        if [[ "$IS_LAPTOP" == "true" ]]; then
-            AUTO_CONFIG_CONTENT+="
-# Laptop config
-CONFIG_ACPI=y
-CONFIG_ACPI_BATTERY=y
-CONFIG_ACPI_THERMAL=y
-CONFIG_PM_OPP=y
-CONFIG_CPU_FREQ_TIMED=y
-CONFIG_IKCONFIG_PROC=y
-"
-        else
-            AUTO_CONFIG_CONTENT+="
-# Desktop config
-CONFIG_HZ_1000=y
-CONFIG_NO_HZ=y
-CONFIG_NO_HZ_IDLE=y
-"
-        fi
-
-        # Virtual machine detection
-        if [[ "$IS_VM" == "true" ]]; then
-            AUTO_CONFIG_CONTENT+="
-# Virtual machine guest
-CONFIG_PARAVIRT=y
-CONFIG_KVM_GUEST=y
-CONFIG_VIRT_DRIVERS=y
-"
-        fi
-
-        # Compression for btrfs/snapshots
-        AUTO_CONFIG_CONTENT+="
-# Compression and snapshots
-CONFIG_BTRFS_FS=y
-CONFIG_BTRFS_FS_RUN_SANITY_TESTS=n
-CONFIG_ZSTD=y
-CONFIG_LZO=y
-CONFIG_LZ4=y
-CONFIG_CRYPTO_ZSTD=y
-"
-
-        # Common configs
-        AUTO_CONFIG_CONTENT+="
-# Common features
-CONFIG_NET=y
-CONFIG_INET=y
-CONFIG_INET_UDP_TUNNEL=y
-CONFIG_IPV6=y
-CONFIG_BRIDGE=y
-CONFIG_BONDING=y
-CONFIG_TUN=y
-CONFIG_VIRTIO_NET=y
-CONFIG_VIRTIO_BLK=y
-
-# Filesystems
-CONFIG_EXT4_FS=y
-CONFIG_F2FS_FS=y
-CONFIG_XFS_FS=y
-CONFIG_VFAT_FS=y
-
-# GPU - video for graphics
-CONFIG_MODULES=y
-CONFIG_DRM=y
-CONFIG_DRM_AMDGPU=y
-CONFIG_DRM_I915=y
-CONFIG_DRM_NOUVEAU=y
-
-# Audio
-CONFIG_SND=y
-CONFIG_SND_HDA_INTEL=y
-CONFIG_SND_HDA_CODEC_REALTEK=y
-CONFIG_SND_USB_AUDIO=y
-
-# CPU idle and frequency
-CONFIG_CPU_IDLE=y
-CONFIG_CPU_FREQ=y
-CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
-
-# Memory management
-CONFIG_MMU=y
-CONFIG_GUP=y
-CONFIG_KSM=y
-
-# Security
-CONFIG_SECCOMP=y
-CONFIG_SECCOMP_FILTER=y
-CONFIG_CC_STACKPROTECTOR=y
-CONFIG_IKCONFIG=y
-
-# Networking security
-CONFIG_NETFILTER=y
-CONFIG_NF_CONNTRACK=y
-CONFIG_NETFILTER_XT_MATCH_STATE=y
-
-# Performance tuning
-CONFIG_PREEMPT=y
-CONFIG_PREEMPT_VOLUNTARY=y
-"
-        ;;
-    8)
-        ADVANCED_KERNEL=true
-        KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
-        kconfig_method=$(tui_menu "Kernel Config" "Choose your config method:" \
-            "1" "menuconfig - ncurses TUI" \
-            "2" "xconfig    - Qt GUI (needs X)" \
-            "3" "vim        - edit .config in vim" \
-            "4" "nano       - edit .config in nano") || err "cancelled"
-        ;;
-esac
-
-header "System"
-
-kbd_choice=$(tui_menu "Keyboard Layout" "Select keyboard layout:" \
-    "us" "QWERTY  (US)" \
-    "fr" "AZERTY  (FR)") || err "cancelled"
-LAYOUT="$kbd_choice"
-
-audio_choice=$(tui_menu "Audio" "Select audio system:" \
-    "1" "Pipewire   - modern, recommended" \
-    "2" "Pulseaudio - classic") || err "cancelled"
-
-header "Desktop Environment"
-
-desktop_choice=$(tui_menu "Desktop Environment" "Select your desktop environment or window manager:" \
-    "1"  "Hyprland      wayland tiling compositor" \
-    "2"  "KDE Plasma    full featured kde desktop" \
-    "3"  "XFCE4         lightweight classic desktop" \
-    "4"  "GNOME         clean modern desktop" \
-    "5"  "Sway          wayland tiling, minimal" \
-    "6"  "i3            x11 tiling, very lightweight" \
-    "7"  "Cinnamon      traditional, based on gnome" \
-    "8"  "MATE          classic gnome 2 fork" \
-    "9"  "LXQt          super lightweight qt desktop" \
-    "10" "Budgie        clean and simple" \
-    "11" "Deepin        polished desktop env" \
-    "12" "Openbox       bare window manager only" \
-    "13" "bspwm         tiling wm, scriptable" \
-    "14" "Qtile         python tiling wm" \
-    "15" "COSMIC        new rust desktop from system76" \
-    "16" "WindowMaker   classic NeXTSTEP look and feel" \
-    "17" "Fluxbox       fast and light, tabbed windows" \
-    "18" "IceWM         ultra lightweight, taskbar wm" \
-    "19" "Enlightenment e26, effects and compositing" \
-    "20" "Niri          scrollable wayland tiling wm" \
-    "21" "River         wayland dynamic tiling wm" \
-    "22" "Wayfire       wayland compositor, 3d effects" \
-    "23" "Herbstluftwm  manual tiling, ipc driven" \
-    "24" "dwm           suckless dynamic wm, patched" \
-    "25" "awesome       lua configured tiling wm" \
-    "26" "spectrwm      minimalist bsd-style tiling" \
-    "27" "LXDE          lightest full de, gtk2" \
-    "28" "Pantheon      elementary os desktop" \
-    "29" "Plasma Mobile kde mobile shell" \
-    "30" "None") || err "cancelled"
-
-# ask about display manager / greeter after DE selection
-# wayland compositors that have their own greeter skip this
+kbd_choice="us"
+LAYOUT="us"
+audio_choice="1"
+desktop_choice="1"
 USE_CUSTOM_DM=false
 CUSTOM_DM_PKG=""
 CUSTOM_DM_SVC=""
-
-case "$desktop_choice" in
-    # these have their own greeters - skip DM prompt
-    1|5|20|21|22|15)
-        USE_CUSTOM_DM=false
-        ;;
-    # everything else can optionally use SDDM
-    *)
-        sddm_choice=$(tui_menu "Display Manager" "Select a display manager (login screen):\n\nDefault shown per DE, but you can override:" \
-            "1" "SDDM               qt-based, great for KDE/LXQt" \
-            "2" "LightDM            gtk greeter, universal" \
-            "3" "GDM                gnome display manager" \
-            "4" "greetd + tuigreet  minimal terminal greeter" \
-            "5" "ly                 terminal display manager") || err "cancelled"
-
-        case "$sddm_choice" in
-            1) CUSTOM_DM_PKG="sddm";                    CUSTOM_DM_SVC="sddm" ;;
-            2) CUSTOM_DM_PKG="lightdm lightdm-gtk-greeter"; CUSTOM_DM_SVC="lightdm" ;;
-            3) CUSTOM_DM_PKG="gdm";                     CUSTOM_DM_SVC="gdm" ;;
-            4) CUSTOM_DM_PKG="greetd greetd-tuigreet";  CUSTOM_DM_SVC="greetd" ;;
-            5) CUSTOM_DM_PKG="ly";                      CUSTOM_DM_SVC="ly" ;;
-        esac
-        USE_CUSTOM_DM=true
-        ;;
-esac
-
-header "AUR Helper"
-
-aur_helper=$(tui_menu "AUR Helper" "Select AUR helper to install:" \
-    "1" "yay   - go based, most popular" \
-    "2" "paru  - rust based, faster" \
-    "3" "none  - skip") || err "cancelled"
-
-header "GPU Driver"
-
-gpu_choice=$(tui_menu "GPU Driver" "Select GPU driver:" \
-    "1" "NVIDIA Modern   RTX / Turing, GTX 1650 and newer" \
-    "2" "NVIDIA Legacy   Pascal GTX 10xx and older  (AUR)" \
-    "3" "AMD             mesa + vulkan-radeon, RDNA/GCN" \
-    "4" "Intel           integrated graphics" \
-    "5" "VM / None       virtual machine or skip") || err "cancelled"
-
-header "Network"
-
-net_choice=$(tui_menu "Network Manager" "Select network manager:" \
-    "1" "NetworkManager  full featured, nmtui/nmcli support" \
-    "2" "iwd (iwctl)     lightweight, fast, WPA3") || err "cancelled"
-
+aur_helper="1"
+gpu_choice="5"
+net_choice="1"
 NET_PKG="networkmanager"
-[[ "$net_choice" == "2" ]] && NET_PKG="iwd dhcpcd"
-
-header "Swap & ZRAM"
-
-# show detected ram so the user knows what they're working with
-swap_choice=$(tui_menu "Swap & ZRAM" "Detected RAM: ${RAM_MB}MB\n\nSelect a memory configuration:" \
-    "1" "ZRAM only      - compressed ram swap, no disk swap (recommended)" \
-    "2" "Swapfile only  - traditional file-based swap on disk" \
-    "3" "ZRAM + Swap    - both zram and a swapfile (best for low ram)" \
-    "4" "None           - skip swap entirely") || err "cancelled"
-
-# only ask about hibernation if they picked something with a swapfile
-# hibernation requires a real swapfile on disk - zram alone cant do it
+swap_choice="1"
 HIBERNATION=false
 SWAP_SIZE_MB=0
 ZRAM_SIZE_MB=0
-
-if [[ "$swap_choice" == "1" || "$swap_choice" == "3" ]]; then
-    # zram size: half ram for normal, full ram for hibernation capable
-    if tui_yesno "Hibernation" "Do you want to enable hibernation support?\n\nDetected RAM: ${RAM_MB}MB\n\n  Yes → swapfile = ${RAM_MB}MB  (full ram, needed for hibernation)\n  No  → zram = $(( RAM_MB / 2 ))MB  (half ram, lighter on disk)"; then
-        HIBERNATION=true
-        ZRAM_SIZE_MB=$RAM_MB
-    else
-        HIBERNATION=false
-        ZRAM_SIZE_MB=$(( RAM_MB / 2 ))
-    fi
-fi
-
-if [[ "$swap_choice" == "2" || "$swap_choice" == "3" ]]; then
-    # swapfile is always full ram size so hibernation can work if ever enabled
-    if tui_yesno "Hibernation" "Do you want to enable hibernation support?\n\nDetected RAM: ${RAM_MB}MB\n\n  Yes → swapfile = ${RAM_MB}MB  (full ram, required for hibernate)\n  No  → swapfile = $(( RAM_MB / 2 ))MB  (half ram is enough for most uses)"; then
-        HIBERNATION=true
-        SWAP_SIZE_MB=$RAM_MB
-    else
-        HIBERNATION=false
-        SWAP_SIZE_MB=$(( RAM_MB / 2 ))
-    fi
-    # if zram+swap combo, zram is always half regardless
-    [[ "$swap_choice" == "3" && "$ZRAM_SIZE_MB" -eq 0 ]] && ZRAM_SIZE_MB=$(( RAM_MB / 2 ))
-fi
-
-# readable swap summary for confirm screen
-case "$swap_choice" in
-    1) SWAPN="zram ${ZRAM_SIZE_MB}MB zstd" ;;
-    2) SWAPN="swapfile ${SWAP_SIZE_MB}MB" ;;
-    3) SWAPN="zram ${ZRAM_SIZE_MB}MB + swapfile ${SWAP_SIZE_MB}MB" ;;
-    4) SWAPN="none" ;;
-esac
-[[ "$HIBERNATION" == "true" ]] && SWAPN="$SWAPN  (hibernation enabled)"
-
-# tune swappiness based on what swap the user chose
-# no swap = 0 (kernel never tries to swap), zram only = 100 (zram is fast, swap aggressively),
-# swapfile = 10 (slow disk, avoid swapping), zram+swap = 60 (middle ground)
-case "$swap_choice" in
-    1) SWAPPINESS=100 ;;   # zram only - fast compressed ram, swap freely
-    2) SWAPPINESS=10 ;;    # swapfile on disk - slow, avoid unless necessary
-    3) SWAPPINESS=60 ;;    # zram + swapfile - balanced
-    4) SWAPPINESS=0 ;;     # no swap - never swap
-esac
-# override if low ram on a non-zram config - needs to swap more willingly
-[[ "$RAM_MB" -lt 4096 && "$swap_choice" == "2" ]] && SWAPPINESS=30
-
-header "Subspaces"
-
-# MULTI-SELECT: Use checklist to allow selecting multiple subspaces
-subspace_selections=$(tui_checklist "Linux Subspaces" "Optional: Select additional distros subsystems to install alongside zerene\n\nSelect one or more (Press Space to toggle):" \
-    "debian" "Debian       - Debian stable workspace" OFF \
-    "alpine" "Alpine       - Alpine lightweight workspace" OFF \
-    "gentoo" "Gentoo Linux - Gentoo optimised workspace" OFF \
-    "void"   "Void Linux   - Void lightweight workspace"  OFF \
-    "fedora" "Fedora Linux - Fedora stable workspace" OFF \
-    "opensuse" "Opensuse    - Opensuse stable workspace" OFF  ) || err "cancelled"
-
-# Clear previous subspace flags
+subspace_selections=""
 INSTALL_DEBIAN=false
 INSTALL_ALPINE=false
 INSTALL_GENTOO=false
 INSTALL_VOID=false
 INSTALL_FEDORA=false
 INSTALL_OPENSUSE=false
+EXTRA_PKGS=""
+TIMEZONE="UTC"
+MIRROR_COUNTRY=""
+TOTAL_DISK_SIZE=0
+DISK_LIST=()
 
-# Parse selections and set flags
-for choice in $(echo "$subspace_selections" | tr -d '"'); do
-    case "$choice" in
-        debian) INSTALL_DEBIAN=true ;;
-        alpine) INSTALL_ALPINE=true ;;
-        gentoo) INSTALL_GENTOO=true ;;
-        void)   INSTALL_VOID=true ;;   
-        fedora) INSTALL_FEDORA=true ;;
-        opensuse) INSTALL_OPENSUSE=true ;;
+# --------------------------------------------------------
+# helper: detect free/unpartitioned space on a disk
+# returns largest contiguous free region in GB
+# --------------------------------------------------------
+detect_free_space() {
+    local disk="$1"
+    local total_gb="$2"
+
+    # Use parted to find free space regions
+    local free_regions
+    free_regions=$(parted -s "$disk" unit MiB print free 2>/dev/null | \
+        awk '/Free Space/{print $3}' | tr -d 'MiB' | sort -rn | head -1)
+
+    if [[ -n "$free_regions" && "$free_regions" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        # convert MiB to GB (floor)
+        echo $(( ${free_regions%.*} / 1024 ))
+    else
+        # fallback: assume entire disk is free
+        echo "$total_gb"
+    fi
+}
+
+# helper: list existing partitions on a disk
+list_existing_partitions() {
+    local disk="$1"
+    parted -s "$disk" unit GiB print 2>/dev/null | \
+        awk '/^ [0-9]/{printf "  Part %s: %s  %s  %s\n", $1, $4, $5, $6}'
+}
+
+# --------------------------------------------------------
+# step functions
+# --------------------------------------------------------
+
+step_identity() {
+    local h u p p2 pc
+    h=$(tui_input "Hostname" "Enter a hostname for this machine:" "$hostname") || return 1
+    hostname="$h"
+
+    u=$(tui_input "User Account" "Enter your username:" "$username") || return 1
+    username="$u"
+
+    p=$(tui_pass "User Account" "Enter password for '$username':") || return 1
+    p2=$(tui_pass "User Account" "Confirm password:") || return 1
+    if [[ "$p" != "$p2" ]]; then
+        tui_msg "Password Mismatch" "The passwords you entered do not match.\nPlease try again."
+        step_identity
+        return $?
+    fi
+    password="$p"
+
+    pc=$(tui_menu "Privilege Escalation" "Select your privilege escalation tool:" \
+        "1" "sudo      - standard, most compatible (recommended)" \
+        "2" "doas      - minimal, openbsd-style (opendoas)") || return 1
+    priv_choice="$pc"
+}
+
+step_timezone() {
+    # build region list from /usr/share/zoneinfo
+    local REGIONS=()
+    local region
+    while IFS= read -r region; do
+        REGIONS+=("$region" "")
+    done < <(ls /usr/share/zoneinfo/ | grep -v '[+\-]' | \
+        while read f; do [ -d "/usr/share/zoneinfo/$f" ] && echo "$f"; done | sort)
+
+    local selected_region
+    selected_region=$(tui_menu "Timezone - Region" "Select your region:" "${REGIONS[@]}") || return 1
+
+    # build zone list for that region
+    local ZONES=()
+    local zone
+    while IFS= read -r zone; do
+        ZONES+=("$zone" "")
+    done < <(ls "/usr/share/zoneinfo/$selected_region" 2>/dev/null | sort)
+
+    if [[ ${#ZONES[@]} -eq 0 ]]; then
+        # region IS the zone (e.g. UTC)
+        TIMEZONE="$selected_region"
+        return 0
+    fi
+
+    local selected_zone
+    selected_zone=$(tui_menu "Timezone - Zone" "Region: $selected_region\n\nSelect your timezone:" "${ZONES[@]}") || {
+        # back from zone list goes back to region selection
+        step_timezone
+        return $?
+    }
+    TIMEZONE="$selected_region/$selected_zone"
+}
+
+step_mirrors() {
+    local mirror_choice
+    mirror_choice=$(tui_menu "Mirror Selection" \
+        "Select a mirror region for pacman.\nSkip to use the default Arch mirror list (reflector can be run later)." \
+        "skip"       "Skip  -  use default mirror list (recommended)" \
+        "US"         "United States" \
+        "GB"         "United Kingdom" \
+        "DE"         "Germany" \
+        "FR"         "France" \
+        "NL"         "Netherlands" \
+        "SE"         "Sweden" \
+        "NO"         "Norway" \
+        "FI"         "Finland" \
+        "DK"         "Denmark" \
+        "CA"         "Canada" \
+        "AU"         "Australia" \
+        "JP"         "Japan" \
+        "KR"         "South Korea" \
+        "SG"         "Singapore" \
+        "IN"         "India" \
+        "BR"         "Brazil" \
+        "PL"         "Poland" \
+        "CZ"         "Czech Republic" \
+        "AT"         "Austria" \
+        "CH"         "Switzerland" \
+        "IT"         "Italy" \
+        "ES"         "Spain" \
+        "PT"         "Portugal" \
+        "RO"         "Romania" \
+        "BG"         "Bulgaria" \
+        "TR"         "Turkey" \
+        "ZA"         "South Africa" \
+        "RU"         "Russia" \
+        "UA"         "Ukraine") || return 1
+
+    MIRROR_COUNTRY="$mirror_choice"
+
+    if [[ "$mirror_choice" != "skip" ]]; then
+        tui_msg "Mirror" "Mirror region set to: $mirror_choice\n\nThe installer will run reflector to fetch the fastest mirrors in that region before installing packages."
+    fi
+}
+
+step_disk() {
+    DISK_LIST=()
+    while IFS= read -r line; do
+        local name size model
+        name=$(echo "$line" | awk '{print $1}')
+        size=$(echo "$line" | awk '{print $2}')
+        model=$(echo "$line" | awk '{$1=$2=""; print $0}' | xargs)
+        DISK_LIST+=("$name" "${size}  ${model}")
+    done < <(lsblk -dno NAME,SIZE,MODEL | grep -v "loop")
+
+    local did
+    did=$(tui_menu "Disk Selection" "Select the disk to install Zerene OS on:" "${DISK_LIST[@]}") || return 1
+    DISK_ID="$did"
+    TARGET_DISK="/dev/$DISK_ID"
+    [[ $TARGET_DISK == *"nvme"* ]] && P="p" || P=""
+
+    if [[ "$TARGET_DISK" == *"nvme"* ]]; then
+        DISK_TYPE="nvme"
+    elif [[ "$(cat /sys/block/$(basename $TARGET_DISK)/queue/rotational 2>/dev/null)" == "0" ]]; then
+        DISK_TYPE="ssd"
+    else
+        DISK_TYPE="hdd"
+    fi
+
+    if [[ "$DISK_TYPE" == "nvme" ]]; then
+        IO_SCHED_RULE='ACTION=="add|change", KERNEL=="nvme[0-9]*", ATTR{queue/scheduler}="none"'
+    elif [[ "$DISK_TYPE" == "ssd" ]]; then
+        IO_SCHED_RULE='ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="mq-deadline"'
+    else
+        IO_SCHED_RULE='ACTION=="add|change", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="bfq"'
+    fi
+
+    TOTAL_DISK_SIZE=$(lsblk -dno SIZE -b "$TARGET_DISK" | awk '{printf "%.0f", $1/1024/1024/1024}')
+}
+
+step_disk_option() {
+    # detect existing partitions and free space
+    local existing_parts
+    existing_parts=$(list_existing_partitions "$TARGET_DISK")
+    local detected_free_gb
+    detected_free_gb=$(detect_free_space "$TARGET_DISK" "$TOTAL_DISK_SIZE")
+
+    local part_info=""
+    if [[ -n "$existing_parts" ]]; then
+        part_info="\nExisting partitions:\n$existing_parts\n\nLargest free region: ~${detected_free_gb}GB"
+    else
+        part_info="\nNo existing partitions detected - disk appears empty."
+    fi
+
+    local doc
+    doc=$(tui_radiolist "Disk Option" \
+        "Disk: ${TARGET_DISK} (${TOTAL_DISK_SIZE}GB)${part_info}\n\nSelect installation method:" \
+        "1" "Format entire disk  - erase everything, single OS" $([ "$disk_option_choice" == "1" ] && echo ON || echo OFF) \
+        "2" "Split disk          - dual boot, use free space"    $([ "$disk_option_choice" == "2" ] && echo ON || echo OFF)) || return 1
+    disk_option_choice="$doc"
+
+    case "$disk_option_choice" in
+        1)
+            FORMAT_DISK=true
+            SPLIT_DISK=false
+            SPLIT_PERCENT=100
+            FREE_DISK_SPACE=$TOTAL_DISK_SIZE
+
+            tui_yesno "Format Disk" "Wipe and format $TARGET_DISK ?\n\nThis will ERASE ALL DATA on this disk.\nMake sure you have backups." \
+                && FORMAT_DISK=true || { disk_option_choice=""; step_disk_option; return $?; }
+            ;;
+        2)
+            FORMAT_DISK=false
+            SPLIT_DISK=true
+
+            # ── accurate split slider ──────────────────────────────────────
+            # build slider options from 10GB up to detected_free_gb in steps
+            local SLIDER_ITEMS=()
+            local step_gb=5
+            local min_gb=10
+            local g
+
+            # if free space < 10GB warn
+            if [[ "$detected_free_gb" -lt 10 ]]; then
+                tui_msg "Low Free Space" \
+                    "Only ~${detected_free_gb}GB of free space detected on $TARGET_DISK.\n\nZerene OS needs at least 10GB. Consider freeing space from Windows\n(Disk Management → shrink C:) before installing."
+                return 1
+            fi
+
+            for (( g=min_gb; g<=detected_free_gb; g+=step_gb )); do
+                local pct=$(( g * 100 / TOTAL_DISK_SIZE ))
+                local win_left=$(( detected_free_gb - g ))
+                local flag=OFF
+                [[ "$SPLIT_PERCENT" -gt 0 && $(( TOTAL_DISK_SIZE * SPLIT_PERCENT / 100 )) -eq $g ]] && flag=ON
+                # default to middle
+                [[ $g -eq $(( (min_gb + detected_free_gb) / 2 / step_gb * step_gb )) && "$flag" == "OFF" ]] && flag=ON
+                SLIDER_ITEMS+=("$g" "${g}GB for Zerene  (~${pct}% of disk)  ·  ${win_left}GB stays for existing OS" "$flag")
+            done
+
+            # add exact free space as last option if not already included
+            local last_g=$(( detected_free_gb ))
+            if (( last_g % step_gb != 0 )); then
+                local pct=$(( last_g * 100 / TOTAL_DISK_SIZE ))
+                SLIDER_ITEMS+=("$last_g" "${last_g}GB for Zerene  (ALL free space)  ·  0GB stays for existing OS" OFF)
+            fi
+
+            local chosen_gb
+            chosen_gb=$(whiptail --title "  Disk Split  " --separate-output \
+                --radiolist \
+                "Disk: ${TARGET_DISK} (${TOTAL_DISK_SIZE}GB total)\nFree space available: ~${detected_free_gb}GB\n\nSelect how much free space to give Zerene:\n(Existing OS partitions are NOT touched)\n\n[ESC = go back]" \
+                26 78 14 "${SLIDER_ITEMS[@]}" 3>&1 1>&2 2>&3) || return 1
+
+            ZERENE_SIZE_GB="$chosen_gb"
+            OTHER_SIZE_GB=$(( detected_free_gb - chosen_gb ))
+            SPLIT_PERCENT=$(( chosen_gb * 100 / TOTAL_DISK_SIZE ))
+            FREE_DISK_SPACE=$OTHER_SIZE_GB
+            ;;
     esac
-done
-# --------------------------------------------------------
-# readable names for summary
-# --------------------------------------------------------
+}
 
-case $desktop_choice in
-    1)  DN="Hyprland" ;;      2)  DN="KDE Plasma" ;;    3)  DN="XFCE4" ;;
-    4)  DN="GNOME" ;;         5)  DN="Sway" ;;           6)  DN="i3" ;;
-    7)  DN="Cinnamon" ;;      8)  DN="MATE" ;;            9)  DN="LXQt" ;;
-    10) DN="Budgie" ;;        11) DN="Deepin" ;;          12) DN="Openbox" ;;
-    13) DN="bspwm" ;;         14) DN="Qtile" ;;           15) DN="COSMIC" ;;
-    16) DN="WindowMaker" ;;   17) DN="Fluxbox" ;;         18) DN="IceWM" ;;
-    19) DN="Enlightenment" ;;  20) DN="Niri" ;;            21) DN="River" ;;
-    22) DN="Wayfire" ;;       23) DN="Herbstluftwm" ;;    24) DN="dwm" ;;
-    25) DN="awesome" ;;       26) DN="spectrwm" ;;        27) DN="LXDE" ;;
-    28) DN="Pantheon" ;;      29) DN="Plasma Mobile" ;; 30) DN="Unknown"
-    *) DN="Unknown" ;;
-esac
-case "$USE_CUSTOM_DM" in true) DMN="$CUSTOM_DM_SVC" ;; *) DMN="built-in greeter" ;; esac
-case $aur_helper in 1) AN="yay" ;; 2) AN="paru" ;; *) AN="none" ;; esac
-case $gpu_choice in
-    1) GN="NVIDIA Modern" ;; 2) GN="NVIDIA Legacy" ;;
-    3) GN="AMD" ;;           4) GN="Intel" ;; 5) GN="VM/None" ;;
-esac
-case $net_choice in 1) NN="NetworkManager" ;; 2) NN="iwd" ;; esac
-case $priv_choice in 1) PRIVN="sudo" ;; 2) PRIVN="doas (opendoas)" ;; esac
-case $nix_choice in 1) NIXN="yes" ;; *) NIXN="no" ;; esac
-case $audio_choice in 1) AUDN="Pipewire" ;; 2) AUDN="Pulseaudio" ;; esac
+step_filesystem() {
+    local fc
+    fc=$(tui_menu "Filesystem Format" "Select the filesystem for your root partition:" \
+        "1" "btrfs       - snapshots, compression, subvolumes (recommended)") || return 1
+    fs_choice="$fc"
+    case "$fs_choice" in
+        1) FS_TYPE="btrfs" ;;
+        *) FS_TYPE="btrfs" ;;
+    esac
+}
 
-# Build subspace summary string
-SUBSPACE_SUMMARY=""
-[[ "$INSTALL_DEBIAN" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Debian"
-[[ "$INSTALL_ALPINE" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Alpine"
-[[ "$INSTALL_GENTOO" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Gentoo"
-[[ "$INSTALL_VOID" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Void"
-[[ "$INSTALL_FEDORA" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Fedora"
-[[ "$INSTALL_OPENSUSE" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Opensuse"
-[[ -z "$SUBSPACE_SUMMARY" ]] && SUBSPACE_SUMMARY="none"
+step_nix() {
+    local nc
+    nc=$(tui_menu "Nix Package Manager" "Include Nix package manager?" \
+        "1" "Yes - install Nix (multi-user daemon mode)" \
+        "2" "No  - skip Nix") || return 1
+    nix_choice="$nc"
+}
 
-header "Additional Packages"
+step_kernel() {
+    local KERN_PROMPT="  CPU:    $CPU_MODEL_NAME\n  Cores:  $CPU_CORES     RAM: ${RAM_MB} MB\n  Disk:   $DISK_TYPE     Laptop: $IS_LAPTOP\n\nSelect a kernel:"
+    local kc
+    kc=$(tui_menu "Kernel" "$KERN_PROMPT" \
+        "1" "linux          - stable, default arch kernel" \
+        "2" "linux-zen      - lower latency, better for gaming/desktop" \
+        "3" "linux-hardened - security hardened" \
+        "4" "linux-lts      - long term support, older but very stable" \
+        "5" "linux-cachyos  - best for gaming (requires cachyos repo)" \
+        "6" "auto-tune      - zerene picks best kernel + tunes for your hw" \
+        "7" "auto-config    - generate .config based on your specs" \
+        "8" "advanced       - you configure it (menuconfig / vim / nano)") || return 1
+    kernel_choice="$kc"
 
-EXTRA_PKGS=$(tui_input "Additional Packages" \
-    "Enter any extra packages to install before setup (space-separated).\nLeave blank to skip.\n\nExample: vim neovim htop wget curl firefox" "") || err "cancelled"
+    KERNEL_PKG="linux"
+    KERNEL_HEADERS="linux-headers"
+    ADVANCED_KERNEL=false
+    AUTO_TUNE=false
+    AUTO_CONFIG=false
+    KERN_PARAMS=""
+    AUTO_CONFIG_CONTENT=""
 
-# --------------------------------------------------------
-# confirm summary
-# --------------------------------------------------------
+    case "$kernel_choice" in
+        1) KERNEL_PKG="linux";          KERNEL_HEADERS="linux-headers" ;;
+        2) KERNEL_PKG="linux-zen";      KERNEL_HEADERS="linux-zen-headers" ;;
+        3) KERNEL_PKG="linux-hardened"; KERNEL_HEADERS="linux-hardened-headers" ;;
+        4) KERNEL_PKG="linux-lts";      KERNEL_HEADERS="linux-lts-headers" ;;
+        5) KERNEL_PKG="linux-cachyos";  KERNEL_HEADERS="linux-cachyos-headers" ;;
+        6)
+            AUTO_TUNE=true
+            if   [[ "$IS_VM" == "true" ]]; then
+                KERNEL_PKG="linux";     KERNEL_HEADERS="linux-headers"
+            elif [[ "$CPU_VENDOR" == "AuthenticAMD" && "$IS_LAPTOP" == "false" ]]; then
+                KERNEL_PKG="linux-zen"; KERNEL_HEADERS="linux-zen-headers"
+            else
+                KERNEL_PKG="linux";     KERNEL_HEADERS="linux-headers"
+            fi
+            if [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
+                if [[ "$CPU_FAMILY" -ge 25 ]] || { [[ "$CPU_FAMILY" -eq 23 ]] && [[ "$CPU_MODEL" -ge 49 ]]; }; then
+                    KERN_PARAMS="$KERN_PARAMS amd_pstate=active"
+                fi
+                KERN_PARAMS="$KERN_PARAMS processor.max_cstate=5"
+                [[ "$IS_VM" == "false" ]] && KERN_PARAMS="$KERN_PARAMS spec_store_bypass_disable=prctl spectre_v2=off"
+            fi
+            [[ "$CPU_VENDOR" == "GenuineIntel" && "$CPU_GEN" -ge 6 ]] && KERN_PARAMS="$KERN_PARAMS intel_pstate=active"
+            [[ "$IS_LAPTOP" == "true" ]] && KERN_PARAMS="$KERN_PARAMS pcie_aspm=force nmi_watchdog=0"
+            [[ "$RAM_MB" -lt 4096 ]] && SWAPPINESS=30 || SWAPPINESS=10
+            ;;
+        7)
+            AUTO_CONFIG=true
+            KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
+            AUTO_CONFIG_CONTENT="#
+# Zerene auto-generated kernel config
+# Generated for: $CPU_MODEL_NAME
+# RAM: ${RAM_MB}MB | Cores: $CPU_CORES | Disk: $DISK_TYPE
+#
+CONFIG_64BIT=y
+CONFIG_X86_64=y
+CONFIG_MICROCODE=y
+CONFIG_MICROCODE_AMD=y
+CONFIG_MICROCODE_INTEL=y
+"
+            if [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
+                AUTO_CONFIG_CONTENT+="CONFIG_AMD=y
+CONFIG_AMD_NB=y
+"
+                [[ "$CPU_FAMILY" -ge 25 ]] && AUTO_CONFIG_CONTENT+="CONFIG_AMD_PSTATE=y
+CONFIG_ACPI_CPPC=y
+"
+            elif [[ "$CPU_VENDOR" == "GenuineIntel" ]]; then
+                AUTO_CONFIG_CONTENT+="CONFIG_INTEL=y
+"
+            fi
+            [[ "$RAM_MB" -gt 16384 ]] && AUTO_CONFIG_CONTENT+="CONFIG_NUMA=y
+CONFIG_KMEMCG=y
+CONFIG_MEMCG=y
+"
+            [[ "$RAM_MB" -lt 4096 ]] && AUTO_CONFIG_CONTENT+="CONFIG_ZSWAP=y
+CONFIG_ZPOOL=y
+"
+            AUTO_CONFIG_CONTENT+="CONFIG_BTRFS_FS=y
+CONFIG_ZSTD=y
+CONFIG_DRM=y
+CONFIG_DRM_AMDGPU=y
+CONFIG_DRM_I915=y
+CONFIG_DRM_NOUVEAU=y
+CONFIG_SND=y
+CONFIG_SND_HDA_INTEL=y
+CONFIG_CPU_IDLE=y
+CONFIG_CPU_FREQ=y
+CONFIG_PREEMPT=y
+CONFIG_SECCOMP=y
+CONFIG_NETFILTER=y
+"
+            ;;
+        8)
+            ADVANCED_KERNEL=true
+            KERNEL_PKG="linux"; KERNEL_HEADERS="linux-headers"
+            local km
+            km=$(tui_menu "Kernel Config" "Choose your config method:" \
+                "1" "menuconfig - ncurses TUI" \
+                "2" "xconfig    - Qt GUI (needs X)" \
+                "3" "vim        - edit .config in vim" \
+                "4" "nano       - edit .config in nano") || return 1
+            kconfig_method="$km"
+            ;;
+    esac
+}
 
-SUM="
+step_system() {
+    local kc
+    kc=$(tui_menu "Keyboard Layout" "Select keyboard layout:" \
+        "us" "QWERTY  (US)" \
+        "fr" "AZERTY  (FR)" \
+        "de" "QWERTZ  (DE)" \
+        "es" "QWERTY  (ES)" \
+        "it" "QWERTY  (IT)" \
+        "pt" "QWERTY  (PT)" \
+        "ru" "ЙЦУКЕН (RU)" \
+        "jp" "JIS     (JP)" \
+        "uk" "QWERTY  (UK)") || return 1
+    kbd_choice="$kc"
+    LAYOUT="$kbd_choice"
+
+    local ac
+    ac=$(tui_menu "Audio" "Select audio system:" \
+        "1" "Pipewire   - modern, recommended" \
+        "2" "Pulseaudio - classic") || return 1
+    audio_choice="$ac"
+}
+
+step_desktop() {
+    local dc
+    dc=$(tui_menu "Desktop Environment" "Select your desktop environment or window manager:" \
+        "1"  "Hyprland      wayland tiling compositor" \
+        "2"  "KDE Plasma    full featured kde desktop" \
+        "3"  "XFCE4         lightweight classic desktop" \
+        "4"  "GNOME         clean modern desktop" \
+        "5"  "Sway          wayland tiling, minimal" \
+        "6"  "i3            x11 tiling, very lightweight" \
+        "7"  "Cinnamon      traditional, based on gnome" \
+        "8"  "MATE          classic gnome 2 fork" \
+        "9"  "LXQt          super lightweight qt desktop" \
+        "10" "Budgie        clean and simple" \
+        "11" "Deepin        polished desktop env" \
+        "12" "Openbox       bare window manager only" \
+        "13" "bspwm         tiling wm, scriptable" \
+        "14" "Qtile         python tiling wm" \
+        "15" "COSMIC        new rust desktop from system76" \
+        "16" "WindowMaker   classic NeXTSTEP look and feel" \
+        "17" "Fluxbox       fast and light, tabbed windows" \
+        "18" "IceWM         ultra lightweight, taskbar wm" \
+        "19" "Enlightenment e26, effects and compositing" \
+        "20" "Niri          scrollable wayland tiling wm" \
+        "21" "River         wayland dynamic tiling wm" \
+        "22" "Wayfire       wayland compositor, 3d effects" \
+        "23" "Herbstluftwm  manual tiling, ipc driven" \
+        "24" "dwm           suckless dynamic wm, patched" \
+        "25" "awesome       lua configured tiling wm" \
+        "26" "spectrwm      minimalist bsd-style tiling" \
+        "27" "LXDE          lightest full de, gtk2" \
+        "28" "Pantheon      elementary os desktop" \
+        "29" "Plasma Mobile kde mobile shell" \
+        "30" "None") || return 1
+    desktop_choice="$dc"
+
+    USE_CUSTOM_DM=false
+    CUSTOM_DM_PKG=""
+    CUSTOM_DM_SVC=""
+
+    case "$desktop_choice" in
+        1|5|20|21|22|15)
+            USE_CUSTOM_DM=false
+            ;;
+        *)
+            local sddm_choice
+            sddm_choice=$(tui_menu "Display Manager" "Select a display manager (login screen):" \
+                "1" "SDDM               qt-based, great for KDE/LXQt" \
+                "2" "LightDM            gtk greeter, universal" \
+                "3" "GDM                gnome display manager" \
+                "4" "greetd + tuigreet  minimal terminal greeter" \
+                "5" "ly                 terminal display manager") || return 1
+
+            case "$sddm_choice" in
+                1) CUSTOM_DM_PKG="sddm";                    CUSTOM_DM_SVC="sddm" ;;
+                2) CUSTOM_DM_PKG="lightdm lightdm-gtk-greeter"; CUSTOM_DM_SVC="lightdm" ;;
+                3) CUSTOM_DM_PKG="gdm";                     CUSTOM_DM_SVC="gdm" ;;
+                4) CUSTOM_DM_PKG="greetd greetd-tuigreet";  CUSTOM_DM_SVC="greetd" ;;
+                5) CUSTOM_DM_PKG="ly";                      CUSTOM_DM_SVC="ly" ;;
+            esac
+            USE_CUSTOM_DM=true
+            ;;
+    esac
+}
+
+step_aur() {
+    local ah
+    ah=$(tui_menu "AUR Helper" "Select AUR helper to install:" \
+        "1" "yay   - go based, most popular" \
+        "2" "paru  - rust based, faster" \
+        "3" "none  - skip") || return 1
+    aur_helper="$ah"
+}
+
+step_gpu() {
+    local gc
+    gc=$(tui_menu "GPU Driver" "Select GPU driver:" \
+        "1" "NVIDIA Modern   RTX / Turing, GTX 1650 and newer" \
+        "2" "NVIDIA Legacy   Pascal GTX 10xx and older  (AUR)" \
+        "3" "AMD             mesa + vulkan-radeon, RDNA/GCN" \
+        "4" "Intel           integrated graphics" \
+        "5" "VM / None       virtual machine or skip") || return 1
+    gpu_choice="$gc"
+}
+
+step_network() {
+    local nc
+    nc=$(tui_menu "Network Manager" "Select network manager:" \
+        "1" "NetworkManager  full featured, nmtui/nmcli support" \
+        "2" "iwd (iwctl)     lightweight, fast, WPA3") || return 1
+    net_choice="$nc"
+    NET_PKG="networkmanager"
+    [[ "$net_choice" == "2" ]] && NET_PKG="iwd dhcpcd"
+}
+
+step_swap() {
+    local sc
+    sc=$(tui_menu "Swap & ZRAM" "Detected RAM: ${RAM_MB}MB\n\nSelect a memory configuration:" \
+        "1" "ZRAM only      - compressed ram swap, no disk swap (recommended)" \
+        "2" "Swapfile only  - traditional file-based swap on disk" \
+        "3" "ZRAM + Swap    - both zram and a swapfile (best for low ram)" \
+        "4" "None           - skip swap entirely") || return 1
+    swap_choice="$sc"
+
+    HIBERNATION=false
+    SWAP_SIZE_MB=0
+    ZRAM_SIZE_MB=0
+
+    if [[ "$swap_choice" == "1" || "$swap_choice" == "3" ]]; then
+        if tui_yesno "Hibernation" "Enable hibernation support?\n\nDetected RAM: ${RAM_MB}MB\n\n  Yes → zram = ${RAM_MB}MB  (full ram, needed for hibernation)\n  No  → zram = $(( RAM_MB / 2 ))MB  (half ram, lighter)"; then
+            HIBERNATION=true
+            ZRAM_SIZE_MB=$RAM_MB
+        else
+            HIBERNATION=false
+            ZRAM_SIZE_MB=$(( RAM_MB / 2 ))
+        fi
+    fi
+
+    if [[ "$swap_choice" == "2" || "$swap_choice" == "3" ]]; then
+        if tui_yesno "Hibernation" "Enable hibernation support?\n\nDetected RAM: ${RAM_MB}MB\n\n  Yes → swapfile = ${RAM_MB}MB\n  No  → swapfile = $(( RAM_MB / 2 ))MB"; then
+            HIBERNATION=true
+            SWAP_SIZE_MB=$RAM_MB
+        else
+            HIBERNATION=false
+            SWAP_SIZE_MB=$(( RAM_MB / 2 ))
+        fi
+        [[ "$swap_choice" == "3" && "$ZRAM_SIZE_MB" -eq 0 ]] && ZRAM_SIZE_MB=$(( RAM_MB / 2 ))
+    fi
+
+    case "$swap_choice" in
+        1) SWAPN="zram ${ZRAM_SIZE_MB}MB zstd" ;;
+        2) SWAPN="swapfile ${SWAP_SIZE_MB}MB" ;;
+        3) SWAPN="zram ${ZRAM_SIZE_MB}MB + swapfile ${SWAP_SIZE_MB}MB" ;;
+        4) SWAPN="none" ;;
+    esac
+    [[ "$HIBERNATION" == "true" ]] && SWAPN="$SWAPN  (hibernation enabled)"
+
+    case "$swap_choice" in
+        1) SWAPPINESS=100 ;;
+        2) SWAPPINESS=10 ;;
+        3) SWAPPINESS=60 ;;
+        4) SWAPPINESS=0 ;;
+    esac
+    [[ "$RAM_MB" -lt 4096 && "$swap_choice" == "2" ]] && SWAPPINESS=30
+}
+
+step_subspaces() {
+    local ss
+    ss=$(tui_checklist "Linux Subspaces" \
+        "Optional: select additional distro subsystems to install alongside Zerene\n\nPress Space to toggle:" \
+        "debian"   "Debian       - Debian stable workspace"       $([ "$INSTALL_DEBIAN"   == "true" ] && echo ON || echo OFF) \
+        "alpine"   "Alpine       - Alpine lightweight workspace"   $([ "$INSTALL_ALPINE"   == "true" ] && echo ON || echo OFF) \
+        "gentoo"   "Gentoo Linux - Gentoo optimised workspace"    $([ "$INSTALL_GENTOO"   == "true" ] && echo ON || echo OFF) \
+        "void"     "Void Linux   - Void lightweight workspace"    $([ "$INSTALL_VOID"     == "true" ] && echo ON || echo OFF) \
+        "fedora"   "Fedora Linux - Fedora stable workspace"       $([ "$INSTALL_FEDORA"   == "true" ] && echo ON || echo OFF) \
+        "opensuse" "Opensuse     - Opensuse stable workspace"     $([ "$INSTALL_OPENSUSE" == "true" ] && echo ON || echo OFF)) || return 1
+    subspace_selections="$ss"
+
+    INSTALL_DEBIAN=false; INSTALL_ALPINE=false; INSTALL_GENTOO=false
+    INSTALL_VOID=false; INSTALL_FEDORA=false; INSTALL_OPENSUSE=false
+    for choice in $(echo "$subspace_selections" | tr -d '"'); do
+        case "$choice" in
+            debian)   INSTALL_DEBIAN=true ;;
+            alpine)   INSTALL_ALPINE=true ;;
+            gentoo)   INSTALL_GENTOO=true ;;
+            void)     INSTALL_VOID=true ;;
+            fedora)   INSTALL_FEDORA=true ;;
+            opensuse) INSTALL_OPENSUSE=true ;;
+        esac
+    done
+}
+
+step_extra_pkgs() {
+    local ep
+    ep=$(tui_input "Additional Packages" \
+        "Enter any extra packages to install (space-separated).\nLeave blank to skip.\n\nExample: vim neovim htop wget curl firefox" \
+        "$EXTRA_PKGS") || return 1
+    EXTRA_PKGS="$ep"
+}
+
+step_confirm() {
+    # readable names
+    case $desktop_choice in
+        1)  DN="Hyprland" ;;      2)  DN="KDE Plasma" ;;    3)  DN="XFCE4" ;;
+        4)  DN="GNOME" ;;         5)  DN="Sway" ;;           6)  DN="i3" ;;
+        7)  DN="Cinnamon" ;;      8)  DN="MATE" ;;            9)  DN="LXQt" ;;
+        10) DN="Budgie" ;;        11) DN="Deepin" ;;          12) DN="Openbox" ;;
+        13) DN="bspwm" ;;         14) DN="Qtile" ;;           15) DN="COSMIC" ;;
+        16) DN="WindowMaker" ;;   17) DN="Fluxbox" ;;         18) DN="IceWM" ;;
+        19) DN="Enlightenment" ;; 20) DN="Niri" ;;            21) DN="River" ;;
+        22) DN="Wayfire" ;;       23) DN="Herbstluftwm" ;;    24) DN="dwm" ;;
+        25) DN="awesome" ;;       26) DN="spectrwm" ;;        27) DN="LXDE" ;;
+        28) DN="Pantheon" ;;      29) DN="Plasma Mobile" ;;   30) DN="None" ;;
+        *) DN="Unknown" ;;
+    esac
+    case "$USE_CUSTOM_DM" in true) DMN="$CUSTOM_DM_SVC" ;; *) DMN="built-in greeter" ;; esac
+    case $aur_helper in 1) AN="yay" ;; 2) AN="paru" ;; *) AN="none" ;; esac
+    case $gpu_choice in
+        1) GN="NVIDIA Modern" ;; 2) GN="NVIDIA Legacy" ;;
+        3) GN="AMD" ;;           4) GN="Intel" ;; 5) GN="VM/None" ;;
+    esac
+    case $net_choice in 1) NN="NetworkManager" ;; 2) NN="iwd" ;; esac
+    case $priv_choice in 1) PRIVN="sudo" ;; 2) PRIVN="doas (opendoas)" ;; esac
+    case $nix_choice in 1) NIXN="yes" ;; *) NIXN="no" ;; esac
+    case $audio_choice in 1) AUDN="Pipewire" ;; 2) AUDN="Pulseaudio" ;; esac
+
+    local DISK_OPT_LINE
+    if [[ "$FORMAT_DISK" == "true" ]]; then
+        DISK_OPT_LINE="Format entire disk"
+    else
+        DISK_OPT_LINE="Split: ${ZERENE_SIZE_GB}GB to Zerene  ·  ${OTHER_SIZE_GB}GB stays for existing OS"
+    fi
+
+    local MIRROR_LINE
+    [[ "$MIRROR_COUNTRY" == "skip" || -z "$MIRROR_COUNTRY" ]] && MIRROR_LINE="default" || MIRROR_LINE="$MIRROR_COUNTRY"
+
+    SUBSPACE_SUMMARY=""
+    [[ "$INSTALL_DEBIAN"   == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Debian"
+    [[ "$INSTALL_ALPINE"   == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Alpine"
+    [[ "$INSTALL_GENTOO"   == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Gentoo"
+    [[ "$INSTALL_VOID"     == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Void"
+    [[ "$INSTALL_FEDORA"   == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Fedora"
+    [[ "$INSTALL_OPENSUSE" == "true" ]] && SUBSPACE_SUMMARY="$SUBSPACE_SUMMARY Opensuse"
+    [[ -z "$SUBSPACE_SUMMARY" ]] && SUBSPACE_SUMMARY="none"
+
+    local SUM="
   Hostname   $hostname
   User       $username
-  Disk       $TARGET_DISK
-  Disk Opt   $([ "$FORMAT_DISK" == "true" ] && echo "format entire disk" || echo "split ${SPLIT_PERCENT}%")
+  Timezone   $TIMEZONE
+  Mirrors    $MIRROR_LINE
+
+  Disk       $TARGET_DISK  (${TOTAL_DISK_SIZE}GB)
+  Disk Opt   $DISK_OPT_LINE
   Filesystem $FS_TYPE
   Boot Mode  $BOOT_MODE
 
@@ -815,114 +937,181 @@ SUM="
   Swap       $SWAPN
   Subspace   $SUBSPACE_SUMMARY
 
-  Extra Pkgs ${EXTRA_PKGS:-none}
+  Extra Pkgs ${EXTRA_PKGS:-none}"
 
-Press Enter to begin installation, Esc to cancel."
+    tui_yesno "Confirm Installation" "$SUM\n\nProceed with installation?" || return 1
+}
 
-tui_yesno "Confirm Installation" "$SUM" || err "cancelled"
+# --------------------------------------------------------
+# step list - defines order and supports going back
+# --------------------------------------------------------
+
+STEPS=(
+    "step_identity"
+    "step_timezone"
+    "step_mirrors"
+    "step_disk"
+    "step_disk_option"
+    "step_filesystem"
+    "step_nix"
+    "step_kernel"
+    "step_system"
+    "step_desktop"
+    "step_aur"
+    "step_gpu"
+    "step_network"
+    "step_swap"
+    "step_subspaces"
+    "step_extra_pkgs"
+    "step_confirm"
+)
+
+CURRENT_STEP=0
+TOTAL_STEPS=${#STEPS[@]}
+
+while [[ $CURRENT_STEP -lt $TOTAL_STEPS ]]; do
+    step_fn="${STEPS[$CURRENT_STEP]}"
+    $step_fn
+    result=$?
+
+    if [[ $result -eq 0 ]]; then
+        # advance
+        (( CURRENT_STEP++ ))
+    else
+        # go back
+        if [[ $CURRENT_STEP -gt 0 ]]; then
+            (( CURRENT_STEP-- ))
+        fi
+        # if already at step 0 and they pressed back - ask if they want to cancel
+        if [[ $CURRENT_STEP -eq 0 && $result -ne 0 ]]; then
+            tui_yesno "Cancel Installation" "Go back to the very first step?\n\nPress No to cancel the installer entirely." || err "installation cancelled by user"
+        fi
+    fi
+done
 
 # --------------------------------------------------------
 # installation - output is visible from here on
 # --------------------------------------------------------
 
-# partitioning
 clear
 
 echo "--------------------------"
 figlet Installing MAINSYS
 echo "--------------------------"
 
+# Apply mirrors if selected
+if [[ "$MIRROR_COUNTRY" != "skip" && -n "$MIRROR_COUNTRY" ]]; then
+    step "Fetching mirrors for: $MIRROR_COUNTRY"
+    if command -v reflector &>/dev/null; then
+        reflector --country "$MIRROR_COUNTRY" --sort rate --save /etc/pacman.d/mirrorlist --latest 10 \
+            || warn "reflector failed, using existing mirror list"
+    else
+        pacman -S --noconfirm reflector &>/dev/null
+        reflector --country "$MIRROR_COUNTRY" --sort rate --save /etc/pacman.d/mirrorlist --latest 10 \
+            || warn "reflector failed, using existing mirror list"
+    fi
+    ok "mirrors updated for $MIRROR_COUNTRY"
+fi
 
 if [[ "$FORMAT_DISK" == "true" || "$SPLIT_DISK" == "true" ]]; then
     step "Partitioning $TARGET_DISK ($FS_TYPE, $BOOT_MODE)"
     swapoff -a
 
     if [[ "$BOOT_MODE" == "uefi" ]]; then
-        # uefi - gpt partition table with esp
-        parted -s "$TARGET_DISK" mklabel gpt
-        parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 513MiB
-        parted -s "$TARGET_DISK" set 1 esp on
-
-        if [[ "$SPLIT_DISK" == "true" ]]; then
-            # split disk - create partition for zerene based on percentage
-            parted -s "$TARGET_DISK" mkpart primary ${ZERENE_SIZE_GB}MiB ${ZERENE_SIZE_GB}MiB
-        else
-            # full disk
+        if [[ "$FORMAT_DISK" == "true" ]]; then
+            # full format - new gpt table
+            parted -s "$TARGET_DISK" mklabel gpt
+            parted -s "$TARGET_DISK" mkpart ESP fat32 1MiB 513MiB
+            parted -s "$TARGET_DISK" set 1 esp on
             parted -s "$TARGET_DISK" mkpart primary 513MiB 100%
-        fi
-        mkfs.fat -F32 "${TARGET_DISK}${P}1"
-    else
-        # legacy bios - msdos partition table with bios_grub partition
-        parted -s "$TARGET_DISK" mklabel msdos
-        parted -s "$TARGET_DISK" mkpart primary 1MiB 3MiB
-        parted -s "$TARGET_DISK" set 1 bios_grub on
-
-        if [[ "$SPLIT_DISK" == "true" ]]; then
-            # split disk
-            parted -s "$TARGET_DISK" mkpart primary 3MiB ${ZERENE_SIZE_GB}MiB
+            mkfs.fat -F32 "${TARGET_DISK}${P}1"
         else
-            # full disk
-            parted -s "$TARGET_DISK" mkpart primary 3MiB 100%
+            # split: find the start of free space and carve out Zerene partition
+            # assume EFI already exists from Windows - use the free region
+            local FREE_START_MIB
+            FREE_START_MIB=$(parted -s "$TARGET_DISK" unit MiB print free 2>/dev/null | \
+                awk '/Free Space/{print $1}' | tr -d 'MiB' | sort -rn | head -1)
+            local ZERENE_END_MIB=$(( FREE_START_MIB + ZERENE_SIZE_GB * 1024 ))
+            parted -s "$TARGET_DISK" mkpart primary "${FREE_START_MIB}MiB" "${ZERENE_END_MIB}MiB"
+            # find the existing EFI partition (type=esp)
+            local EFI_PART
+            EFI_PART=$(parted -s "$TARGET_DISK" print 2>/dev/null | awk '/esp/{print $1}' | head -1)
+            if [[ -n "$EFI_PART" ]]; then
+                step "Reusing existing EFI partition: ${TARGET_DISK}${P}${EFI_PART}"
+                mkfs.fat -F32 "${TARGET_DISK}${P}${EFI_PART}" 2>/dev/null || true
+            fi
+            # the new Zerene partition is the last one
+            local NEW_PART
+            NEW_PART=$(lsblk -no NAME "$TARGET_DISK" | tail -1)
+            TARGET_ROOT="/dev/$NEW_PART"
         fi
-        parted -s "$TARGET_DISK" set 2 boot on
+    else
+        if [[ "$FORMAT_DISK" == "true" ]]; then
+            parted -s "$TARGET_DISK" mklabel msdos
+            parted -s "$TARGET_DISK" mkpart primary 1MiB 3MiB
+            parted -s "$TARGET_DISK" set 1 bios_grub on
+            parted -s "$TARGET_DISK" mkpart primary 3MiB 100%
+            parted -s "$TARGET_DISK" set 2 boot on
+        else
+            local FREE_START_MIB
+            FREE_START_MIB=$(parted -s "$TARGET_DISK" unit MiB print free 2>/dev/null | \
+                awk '/Free Space/{print $1}' | tr -d 'MiB' | sort -rn | head -1)
+            local ZERENE_END_MIB=$(( FREE_START_MIB + ZERENE_SIZE_GB * 1024 ))
+            parted -s "$TARGET_DISK" mkpart primary "${FREE_START_MIB}MiB" "${ZERENE_END_MIB}MiB"
+            local NEW_PART
+            NEW_PART=$(lsblk -no NAME "$TARGET_DISK" | tail -1)
+            TARGET_ROOT="/dev/$NEW_PART"
+        fi
     fi
 
-    # format root partition based on chosen filesystem
+    # figure out which partition is the root (for full format it's always P2)
+    if [[ "$FORMAT_DISK" == "true" ]]; then
+        TARGET_ROOT="${TARGET_DISK}${P}2"
+    fi
+    # TARGET_ROOT is set above for split case
+
+    # format root
     case "$FS_TYPE" in
-        ext4)
-            pacman -S --noconfirm e2fsprogs &>/dev/null || true
-            mkfs.ext4 -L "ZERENE_OS" "${TARGET_DISK}${P}2"
-            ;;
         btrfs)
             pacman -S --noconfirm btrfs-progs &>/dev/null || true
-            mkfs.btrfs -f -L "ZERENE_OS" "${TARGET_DISK}${P}2"
-            ;;
-        xfs)
-            pacman -S --noconfirm xfsprogs &>/dev/null || true
-            mkfs.xfs -f -L "ZERENE_OS" "${TARGET_DISK}${P}2"
-            ;;
-        f2fs)
-            pacman -S --noconfirm f2fs-tools &>/dev/null || true
-            mkfs.f2fs -f -l "ZERENE_OS" "${TARGET_DISK}${P}2"
-            ;;
-        bcachefs)
-            pacman -S --noconfirm bcachefs-tools &>/dev/null || true
-            bcachefs format -L "ZERENE_OS" "${TARGET_DISK}${P}2"
+            mkfs.btrfs -f -L "ZERENE_OS" "$TARGET_ROOT"
             ;;
     esac
 fi
 
-# mount based on filesystem type
+# determine root partition for mounting when no format happened
+if [[ -z "$TARGET_ROOT" ]]; then
+    TARGET_ROOT="${TARGET_DISK}${P}2"
+fi
+
 if [[ "$FS_TYPE" == "btrfs" ]]; then
     step "Creating Btrfs Subvolumes"
-    mount "${TARGET_DISK}${P}2" /mnt
+    mount "$TARGET_ROOT" /mnt
     btrfs subvolume create /mnt/@
     btrfs subvolume create /mnt/@home
     btrfs subvolume create /mnt/@snapshots
     umount /mnt
 
     step "Mounting Btrfs Subvolumes"
-    # Mount with zstd compression to help that HDD speed
-    mount -o noatime,compress=zstd,subvol=@ "${TARGET_DISK}${P}2" /mnt
+    mount -o noatime,compress=zstd,subvol=@ "$TARGET_ROOT" /mnt
     mkdir -p /mnt/{boot/efi,home,.snapshots}
-    mount -o noatime,compress=zstd,subvol=@home "${TARGET_DISK}${P}2" /mnt/home
-    mount -o noatime,compress=zstd,subvol=@snapshots "${TARGET_DISK}${P}2" /mnt/.snapshots
+    mount -o noatime,compress=zstd,subvol=@home "$TARGET_ROOT" /mnt/home
+    mount -o noatime,compress=zstd,subvol=@snapshots "$TARGET_ROOT" /mnt/.snapshots
 else
-    step "Mounting $FS_TYPE Partition"
-    mount "${TARGET_DISK}${P}2" /mnt
-    if [[ "$BOOT_MODE" == "uefi" ]]; then
-        mkdir -p /mnt/boot/efi
-    else
-        mkdir -p /mnt/boot
-    fi
-    mkdir -p /mnt/home
+    step "Mounting Partition"
+    mount "$TARGET_ROOT" /mnt
+    mkdir -p /mnt/{boot/efi,home}
 fi
 
-# mount boot partition
 if [[ "$BOOT_MODE" == "uefi" ]]; then
-    mount "${TARGET_DISK}${P}1" /mnt/boot/efi
+    if [[ "$FORMAT_DISK" == "true" ]]; then
+        mount "${TARGET_DISK}${P}1" /mnt/boot/efi
+    else
+        # mount existing EFI partition
+        EFI_PART=$(parted -s "$TARGET_DISK" print 2>/dev/null | awk '/esp/{print $1}' | head -1)
+        [[ -n "$EFI_PART" ]] && mount "${TARGET_DISK}${P}${EFI_PART}" /mnt/boot/efi
+    fi
 fi
-
 
 INSTALL_NIX=false
 if [[ "$nix_choice" == "1" ]]; then
@@ -932,13 +1121,9 @@ if [[ "$nix_choice" == "1" ]]; then
     mkdir -p /mnt/var/empty
 fi
 
-step "Installing Base System + Generation Tools"
-# Added btrfs-progs and grub-btrfs for btrfs, xfsprogs for xfs, etc.
+step "Installing Base System"
 FS_TOOLS=""
-[[ "$FS_TYPE" == "btrfs" ]]    && FS_TOOLS="btrfs-progs grub-btrfs inotify-tools"
-[[ "$FS_TYPE" == "xfs" ]]      && FS_TOOLS="xfsprogs"
-[[ "$FS_TYPE" == "f2fs" ]]     && FS_TOOLS="f2fs-tools"
-[[ "$FS_TYPE" == "bcachefs" ]] && FS_TOOLS="bcachefs-tools"
+[[ "$FS_TYPE" == "btrfs" ]] && FS_TOOLS="btrfs-progs grub-btrfs inotify-tools"
 
 PRIV_PKG="sudo"
 [[ "$priv_choice" == "2" ]] && PRIV_PKG="opendoas"
@@ -947,19 +1132,15 @@ pacstrap /mnt base "$KERNEL_PKG" "$KERNEL_HEADERS" linux-firmware \
     "$PRIV_PKG" fastfetch plymouth $NET_PKG base-devel git dkms \
     $FS_TOOLS $EXTRA_PKGS
 
-# Generate FSTAB (Crucial for Btrfs subvolumes)
 genfstab -U /mnt >> /mnt/etc/fstab
 
-# advanced kernel or auto-config
 if [[ "$ADVANCED_KERNEL" == "true" ]]; then
     step "Kernel Source Build"
     arch-chroot /mnt bash <<KCONF
         pacman -S --noconfirm asp base-devel
         mkdir -p /root/kernelbuild && cd /root/kernelbuild
         asp export linux && cd linux
-        zcat /proc/config.gz > .config 2>/dev/null || \
-            cp /usr/lib/modules/\$(uname -r)/build/.config .config 2>/dev/null || \
-            make defconfig
+        zcat /proc/config.gz > .config 2>/dev/null || make defconfig
         case "$kconfig_method" in
             1) pacman -S --noconfirm ncurses; make menuconfig ;;
             2) pacman -S --noconfirm qt5-base; make xconfig ;;
@@ -967,62 +1148,37 @@ if [[ "$ADVANCED_KERNEL" == "true" ]]; then
             4) pacman -S --noconfirm nano; nano .config ;;
         esac
         read -rp "Build and install kernel now? [Y/n]: " b
-        if [[ ! "\$b" =~ ^[Nn]$ ]]; then
-            make -j\$(nproc)
-            make modules_install
-            make install
-        fi
+        [[ ! "\$b" =~ ^[Nn]$ ]] && make -j\$(nproc) && make modules_install && make install
 KCONF
 elif [[ "$AUTO_CONFIG" == "true" ]]; then
-    # write the generated .config to a file for review and optional editing
     step "Applying Auto-generated Kernel Config"
-
-    # write config to temp location in chroot
     echo "$AUTO_CONFIG_CONTENT" > /mnt/root/zerene-kernel-config.txt
-
-    # show it in a scrollbox so user can review
     tui_scrollbox "Kernel Config" "$AUTO_CONFIG_CONTENT"
-
-    # ask if they want to use it, edit it, or go with defaults
     config_action=$(tui_menu "Kernel Config" "Your auto-generated .config has been created.\nWhat would you like to do?" \
         "1" "Use as-is    - install with this config" \
         "2" "Edit config  - modify before building" \
-        "3" "Use default  - use arch's default config") || err "cancelled"
-
+        "3" "Use default  - use arch's default config")
     case "$config_action" in
-        1)
-            # use auto-config - apply it during kernel build
-            ARCH_KCONF='yes' | chroot /mnt bash -c 'mkdir -p /root/kernelbuild && cd /root/kernelbuild && asp export linux && cd linux'
-            echo "$AUTO_CONFIG_CONTENT" > /mnt/root/linux/.config
-            msg "Auto-config applied"
-            ;;
+        1) echo "$AUTO_CONFIG_CONTENT" > /mnt/root/linux/.config; msg "Auto-config applied" ;;
         2)
-            # edit config
             arch-chroot /mnt bash <<KEDIT
                 pacman -S --noconfirm nano
                 mkdir -p /root/kernelbuild && cd /root/kernelbuild
                 asp export linux && cd linux
                 zcat /proc/config.gz > .config 2>/dev/null || make defconfig
                 nano .config
-                read -rp "Save and build kernel now? [Y/n]: " b
-                if [[ ! "\$b" =~ ^[Nn]$ ]]; then
-                    make -j\$(nproc) && make modules_install && make install
-                fi
+                read -rp "Build now? [Y/n]: " b
+                [[ ! "\$b" =~ ^[Nn]$ ]] && make -j\$(nproc) && make modules_install && make install
 KEDIT
             ;;
-        3)
-            # use default - just install package normally
-            msg "Using default kernel config"
-            ;;
+        3) msg "Using default kernel config" ;;
     esac
 fi
 
 clear
-
 echo "--------------------------"
 figlet Assets
 echo "--------------------------"
-
 
 mkdir -p /mnt/etc/fastfetch
 [ -d /etc/fastfetch ] && cp -r /etc/fastfetch/* /mnt/etc/fastfetch/
@@ -1032,7 +1188,6 @@ mkdir -p /mnt/usr/share/plymouth/themes/
 cp -r /usr/share/plymouth/themes/zerene-spinner /mnt/usr/share/plymouth/themes/ 2>/dev/null || true
 mkdir -p /mnt/usr/share/wallpapers-zerene/
 cp -r /usr/share/wallpapers-zerene /mnt/usr/share 2>/dev/null || true
-
 ok "assets copied"
 
 # --------------------------------------------------------
@@ -1045,8 +1200,14 @@ echo "--------------------------"
 arch-chroot /mnt bash <<EOF
 
 pacman -S --noconfirm figlet
+
 echo "$hostname" > /etc/hostname
 echo "KEYMAP=$LAYOUT" > /etc/vconsole.conf
+
+# timezone
+ln -sf "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
+hwclock --systohc
+echo "  > timezone set: $TIMEZONE"
 
 mkdir -p /etc/X11/xorg.conf.d
 cat > /etc/X11/xorg.conf.d/00-keyboard.conf <<XKEYBOARD
@@ -1085,15 +1246,12 @@ if [ ! -f /etc/sudoers ]; then touch /etc/sudoers; chmod 440 /etc/sudoers; fi
 if ! grep -q "^%wheel" /etc/sudoers; then echo "%wheel ALL=(ALL:ALL) ALL" >> /etc/sudoers; fi
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-# privilege escalation
 if [[ "$priv_choice" == "2" ]]; then
-    # doas (opendoas) - create doas.conf allowing wheel group
     cat > /etc/doas.conf <<DOASCONF
 permit persist keepenv :wheel
 DOASCONF
     chmod 0400 /etc/doas.conf
     chown root:root /etc/doas.conf
-    # create a sudo shim so scripts that call sudo still work
     if ! command -v sudo &>/dev/null; then
         cat > /usr/local/bin/sudo <<'SUDOSHIM'
 #!/bin/sh
@@ -1101,13 +1259,9 @@ exec doas "$@"
 SUDOSHIM
         chmod +x /usr/local/bin/sudo
     fi
-    echo "  > doas configured for wheel group"
-else
-    echo "  > sudo configured for wheel group"
 fi
 
 clear
-
 echo "--------------------------"
 figlet Nix Packages
 echo "--------------------------"
@@ -1119,22 +1273,17 @@ if [[ "$INSTALL_NIX" == "true" ]]; then
     chmod 1775 /nix/store
     chown -R root:nixbld /nix/var/nix
     chmod -R ug+rwX /nix/var/nix
-
     mkdir -p /etc/nix
     cat > /etc/nix/nix.conf <<NIX
 experimental-features = nix-command
 max-jobs = auto
 build-users-group = nixbld
-# CRITICAL: Disable sandboxing for the chroot install phase
 sandbox = false
 NIX
-
     systemctl enable nix-daemon
-
-    # Exporting this prevents nix-channel from trying to talk to a daemon that isn't running yet
     export NIX_REMOTE=""
     nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
-    nix-channel --update || echo "Channel update failed (expected in chroot), will finish on reboot."
+    nix-channel --update || echo "Channel update failed (expected in chroot)"
 fi
 
 echo "--------------------------"
@@ -1167,11 +1316,9 @@ echo "fastfetch" >> /home/$username/.bashrc
 chown -R $username:$username /home/$username
 
 clear
-
 echo "--------------------------"
 figlet Audio
 echo "--------------------------"
-
 
 if [ "$audio_choice" == "1" ]; then
     pacman -S --noconfirm pipewire pipewire-pulse wireplumber
@@ -1180,49 +1327,24 @@ else
 fi
 
 clear
-
 echo "--------------------------"
 figlet GPU Drivers
 echo "--------------------------"
 
 case "$gpu_choice" in
     1)
-        # nvidia modern - rtx/turing/4060 etc
-        # install kernel headers first so dkms can build the module
         pacman -S --noconfirm "$KERNEL_HEADERS"
-
-        # install nvidia-dkms, utils, settings
         pacman -S --noconfirm nvidia-dkms nvidia-utils nvidia-settings \
             lib32-nvidia-utils libglvnd lib32-libglvnd opencl-nvidia
-
-        # run dkms build explicitly for the running kernel
-        echo "  > building nvidia dkms module for current kernel..."
         dkms autoinstall
-
-        # verify the modules were actually built before touching mkinitcpio
         KVER=\$(uname -r)
         if find /usr/lib/modules/\$KVER -name "nvidia.ko*" 2>/dev/null | grep -q .; then
-            echo "  > nvidia modules confirmed, patching mkinitcpio..."
-            # add nvidia modules to initramfs before rebuild
             sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
-
-            # kms hook conflicts with nvidia early loading - causes black screen on wayland
             sed -i 's/ kms//' /etc/mkinitcpio.conf
-
-            # rebuild initramfs with the nvidia modules in it
-            echo "  > rebuilding initramfs..."
             mkinitcpio -P
-        else
-            echo "  > WARNING: nvidia dkms modules not found in /usr/lib/modules/\$KVER"
-            echo "  > skipping early KMS module injection (will load at runtime instead)"
-            echo "  > you can run: dkms autoinstall && mkinitcpio -P after reboot if needed"
         fi
-
-        # blacklist nouveau so it cant load and fight nvidia
         echo "blacklist nouveau" > /etc/modprobe.d/blacklist-nouveau.conf
         echo "options nouveau modeset=0" >> /etc/modprobe.d/blacklist-nouveau.conf
-
-        # pacman hook - auto rebuilds initramfs whenever nvidia-dkms updates
         mkdir -p /etc/pacman.d/hooks
         cat > /etc/pacman.d/hooks/nvidia.hook <<NVHOOK
 [Trigger]
@@ -1239,7 +1361,6 @@ Exec=/usr/bin/mkinitcpio -P
 NVHOOK
         ;;
     2)
-        # nvidia legacy - pascal gtx 10xx and older, aur only since driver 590
         pacman -S --noconfirm git base-devel "$KERNEL_HEADERS"
         cd /tmp
         git clone https://aur.archlinux.org/nvidia-580xx-dkms.git
@@ -1254,8 +1375,6 @@ NVHOOK
             sed -i 's/^MODULES=(/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm /' /etc/mkinitcpio.conf
             sed -i 's/ kms//' /etc/mkinitcpio.conf
             mkinitcpio -P
-        else
-            echo "  > WARNING: nvidia legacy dkms modules not found, skipping mkinitcpio nvidia injection"
         fi
         echo "blacklist nouveau" > /etc/modprobe.d/blacklist-nouveau.conf
         echo "options nouveau modeset=0" >> /etc/modprobe.d/blacklist-nouveau.conf
@@ -1275,11 +1394,9 @@ NVHOOK
 esac
 
 clear
-
 echo "--------------------------"
 figlet Network
 echo "--------------------------"
-
 
 case "$net_choice" in
     1) systemctl enable NetworkManager ;;
@@ -1298,12 +1415,10 @@ IWDCONF
 esac
 
 clear
-
 echo "--------------------------"
 figlet Desktop
 echo "--------------------------"
 
-# install display manager packages if user selected one
 if [[ "$USE_CUSTOM_DM" == "true" ]]; then
     pacman -S --noconfirm $CUSTOM_DM_PKG
 fi
@@ -1388,28 +1503,23 @@ DWMDT
 esac
 
 clear
-
 echo "--------------------------"
-figlet Aur Helper
+figlet AUR Helper
 echo "--------------------------"
 
 case $aur_helper in
     1|2)
         helper=\$([[ "$aur_helper" == "1" ]] && echo "yay" || echo "paru")
-        msg "Building \$helper..."
         pacman -S --noconfirm --needed git base-devel
         cd /tmp
-        # We clone and build as the actual user
         sudo -u "$username" git clone "https://aur.archlinux.org/\$helper.git"
         cd "\$helper"
-        # --nocheck speeds up the build on your WDC HDD
         sudo -u "$username" makepkg -si --noconfirm --nocheck
         cd /
         ;;
 esac
 
 clear
-
 echo "--------------------------"
 figlet Kernel Tuning
 echo "--------------------------"
@@ -1446,410 +1556,188 @@ fi
 
 pacman -S --noconfirm zram-generator
 
-# zram - only configured when user picked zram only or zram+swap
 if [[ "$swap_choice" == "1" || "$swap_choice" == "3" ]]; then
     cat > /etc/systemd/zram-generator.conf <<ZRAM
 [zram0]
 zram-size = ${ZRAM_SIZE_MB}M
 compression-algorithm = zstd
 ZRAM
-    echo "  > zram configured: ${ZRAM_SIZE_MB}MB zstd"
 fi
 
-# swapfile - only created when user picked swapfile or zram+swap
 if [[ "$swap_choice" == "2" || "$swap_choice" == "3" ]]; then
-    # create swapfile at the correct size
-    echo "  > creating ${SWAP_SIZE_MB}MB swapfile..."
     dd if=/dev/zero of=/swapfile bs=1M count=${SWAP_SIZE_MB} status=progress
     chmod 600 /swapfile
     mkswap /swapfile
     swapon /swapfile
-    # add swapfile to fstab so it persists on reboot
     echo "/swapfile none swap defaults 0 0" >> /etc/fstab
-    echo "  > swapfile created and added to fstab"
 fi
 
-# hibernation - needs resume kernel param pointing at swap uuid or swapfile offset
 if [[ "$HIBERNATION" == "true" && ("$swap_choice" == "2" || "$swap_choice" == "3") ]]; then
-    # get the uuid of the root partition for resume= param
     SWAP_UUID=\$(findmnt -no UUID /swapfile 2>/dev/null || blkid -s UUID -o value "${TARGET_DISK}${P}2")
-    # get the physical offset of the swapfile for resume_offset=
     SWAP_OFFSET=\$(filefrag -v /swapfile 2>/dev/null | awk '/^ *0:/{print \$4}' | tr -d '.')
-    # append resume params to grub so kernel knows where to find swap on wake
     sed -i "s|GRUB_CMDLINE_LINUX_DEFAULT=\"|GRUB_CMDLINE_LINUX_DEFAULT=\"resume=UUID=\${SWAP_UUID} resume_offset=\${SWAP_OFFSET} |" /etc/default/grub
-    # add resume hook to initramfs so it can restore state on boot
     sed -i 's/HOOKS=(.*filesystems/& resume/' /etc/mkinitcpio.conf
     mkinitcpio -P
-    echo "  > hibernation configured (resume=UUID=\${SWAP_UUID} offset=\${SWAP_OFFSET})"
 elif [[ "$HIBERNATION" == "true" && "$swap_choice" == "1" ]]; then
-    # zram-only hibernation path - uses systemd-hibernate-resume with zram
-    # note: zram hibernation requires kernel 6.1+ and CONFIG_HIBERNATION_ZRAM
-    echo "  > zram hibernation requested - enabling systemd hibernate target"
     systemctl enable systemd-hibernate.target 2>/dev/null || true
 fi
 
-# multi select lwk best feature
-
-clear 
-
+clear
 echo "--------------------------"
 figlet Subspaces
 echo "--------------------------"
 
-
 if [[ "$INSTALL_DEBIAN" == "true" ]]; then
-    header "Installing Debian Subspace"
-
-    step "Installing dependencies"
-    pacman -S --noconfirm debootstrap
-    pacman -S --noconfirm debian-archive-keyring
-    pacman -S --noconfirm xorg-xhost
-
-    step "Bootstrap Debian stable"
+    pacman -S --noconfirm debootstrap debian-archive-keyring xorg-xhost
     mkdir -p /subspace/debian
     debootstrap stable /subspace/debian http://deb.debian.org/debian/ || \
     debootstrap --variant=minbase stable /subspace/debian http://deb.debian.org/debian/
-
-    if [ ! -d "/subspace/debian/usr" ]; then
-        echo "ERROR: Debian subspace installation failed"
-        echo "Please check debootstrap output above"
-        exit 1
-    fi
-
-    step "Cleaning apt cache"
     rm -rf /subspace/debian/var/cache/apt/archives/*
-
-    step "Creating launcher script"
     cat > /usr/local/bin/subspace-debian <<'DEBIAN'
 #!/bin/bash
 xhost +local: > /dev/null 2>&1
 if [ -n "\$DISPLAY" ]; then
-    sudo systemd-nspawn -D /subspace/debian \
-        --bind-ro=/tmp/.X11-unix \
-        --bind=/dev/dri \
-        --setenv=DISPLAY=\$DISPLAY \
-        /usr/bin/bash
+    sudo systemd-nspawn -D /subspace/debian --bind-ro=/tmp/.X11-unix --bind=/dev/dri --setenv=DISPLAY=\$DISPLAY /usr/bin/bash
 else
     sudo systemd-nspawn -D /subspace/debian /usr/bin/bash
 fi
 DEBIAN
     chmod +x /usr/local/bin/subspace-debian
-
     echo "alias debian='sudo /usr/local/bin/subspace-debian'" >> /home/$username/.bashrc
-
-    echo "  > Debian subspace installed"
 fi
 
 if [[ "$INSTALL_ALPINE" == "true" ]]; then
-    header "Installing Alpine Subspace"
-
-    step "Installing dependencies"
     pacman -S --noconfirm tar curl xorg-xhost
-
-    step "Bootstrapping Alpine minirootfs"
-    # Create the subspace and the dedicated workspace
-    mkdir -p /subspace/alpine
-    mkdir -p /tempo/alpine-workspace
-
-    # Download: Save it with a specific filename inside your tempo path
+    mkdir -p /subspace/alpine /tempo/alpine-workspace
     curl -L "https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-minirootfs-3.20.0-x86_64.tar.gz" \
          -o /tempo/alpine-workspace/alpine.tar.gz
-
-    # Extract: Point to that specific filename
-    tar -xf "/tempo/alpine-workspace/alpine.tar.gz" -C /subspace/alpine
-
-    # Clean up: Remove the workspace directory and everything inside it
-    rm -rf "/tempo"
-
-    # CRITICAL: Fix DNS so 'apk' works inside the subspace
+    tar -xf /tempo/alpine-workspace/alpine.tar.gz -C /subspace/alpine
+    rm -rf /tempo
     cp /etc/resolv.conf /subspace/alpine/etc/resolv.conf
-
-    if [ ! -d "/subspace/alpine/usr" ]; then
-        echo "ERROR: Alpine subspace installation failed"
-        exit 1
-    fi
-
-    step "Creating launcher script"
     cat > /usr/local/bin/subspace-alpine <<'ALPINE'
 #!/bin/bash
 xhost +local: > /dev/null 2>&1
-
-# not when the installer creates it.
 if [ -n "\$DISPLAY" ]; then
-    sudo systemd-nspawn -q -D /subspace/alpine \
-        --bind-ro=/etc/resolv.conf \
-        --bind-ro=/tmp/.X11-unix \
-        --bind=/dev/dri \
-        --setenv=DISPLAY=\$DISPLAY \
-        /bin/sh
+    sudo systemd-nspawn -q -D /subspace/alpine --bind-ro=/etc/resolv.conf --bind-ro=/tmp/.X11-unix --bind=/dev/dri --setenv=DISPLAY=\$DISPLAY /bin/sh
 else
     sudo systemd-nspawn -q -D /subspace/alpine /bin/sh
 fi
 ALPINE
-
-
     chmod +x /usr/local/bin/subspace-alpine
-
-    echo "alias alpine='/usr/local/bin/subspace-alpine'" >> "/home/$username/.bashrc"
-
-    echo "  > Alpine subspace installed"
+    echo "alias alpine='/usr/local/bin/subspace-alpine'" >> /home/$username/.bashrc
 fi
 
 if [[ "$INSTALL_GENTOO" == "true" ]]; then
-    header "Installing gentoo Subspace"
-
-    step "Installing dependencies"
     pacman -S --noconfirm tar curl xorg-xhost
-
-    step "Bootstrapping Gentoo"
-    # Create the subspace and the dedicated workspace
-    mkdir -p /subspace/gentoo
-    mkdir -p /tempo/gentoo-workspace
-
-    # Download: Save it with a specific filename inside your tempo path
+    mkdir -p /subspace/gentoo /tempo/gentoo-workspace
     curl -L "https://mirrors.kernel.org/gentoo/releases/amd64/autobuilds/20260419T164601Z/stage3-amd64-desktop-openrc-20260419T164601Z.tar.xz" \
          -o /tempo/gentoo-workspace/gentoo.tar.xz
-
-    # Extract: Point to that specific filename
-    tar -xf "/tempo/gentoo-workspace/gentoo.tar.xz" -C /subspace/gentoo
-
-    # Clean up: Remove the workspace directory and everything inside it
-    rm -rf "/tempo"
-
-    # CRITICAL: Fix DNS so 'emerge' works inside the subspace
+    tar -xf /tempo/gentoo-workspace/gentoo.tar.xz -C /subspace/gentoo
+    rm -rf /tempo
     cp /etc/resolv.conf /subspace/gentoo/etc/resolv.conf
--x
-    if [ ! -d "/subspace/gentoo/usr" ]; then
-        echo "ERROR: Gentoo subspace installation failed"
-        exit 1
-    fi
-
-    step "Creating launcher script"
     cat > /usr/local/bin/subspace-gentoo <<'GENTOO'
 #!/bin/bash
 xhost +local: > /dev/null 2>&1
-
-# not when the installer creates it.
 if [ -n "\$DISPLAY" ]; then
-    sudo systemd-nspawn -q -D /subspace/gentoo \
-        --bind-ro=/etc/resolv.conf \
-        --bind-ro=/tmp/.X11-unix \
-        --bind=/dev/dri \
-        --setenv=DISPLAY=\$DISPLAY \
-        /bin/sh
+    sudo systemd-nspawn -q -D /subspace/gentoo --bind-ro=/etc/resolv.conf --bind-ro=/tmp/.X11-unix --bind=/dev/dri --setenv=DISPLAY=\$DISPLAY /bin/sh
 else
     sudo systemd-nspawn -q -D /subspace/gentoo /bin/sh
 fi
 GENTOO
-
-
     chmod +x /usr/local/bin/subspace-gentoo
-
-    echo "alias gentoo='/usr/local/bin/subspace-gentoo'" >> "/home/$username/.bashrc"
-
-    echo "  > Gentoo subspace installed"
+    echo "alias gentoo='/usr/local/bin/subspace-gentoo'" >> /home/$username/.bashrc
 fi
 
 if [[ "$INSTALL_VOID" == "true" ]]; then
-    header "Installing Void Subspace"
-
-    step "Installing dependencies"
     pacman -S --noconfirm tar curl xorg-xhost
-
-    step "Bootstrapping Void"
-    # Create the subspace and the dedicated workspace
-    mkdir -p /subspace/void
-    mkdir -p /tempo/void-workspace
-
-    # Download: Save it with a specific filename inside your tempo path
+    mkdir -p /subspace/void /tempo/void-workspace
     curl -L "https://repo-default.voidlinux.org/live/current/void-x86_64-musl-ROOTFS-20250202.tar.xz" \
          -o /tempo/void-workspace/void.tar.xz
-
-    # Extract: Point to that specific filename
-    tar -xf "/tempo/void-workspace/void.tar.xz" -C /subspace/void
-
-    # Clean up: Remove the workspace directory and everything inside it
-    rm -rf "/tempo"
-
-    # CRITICAL: Fix DNS so 'xbps' works inside the subspace
+    tar -xf /tempo/void-workspace/void.tar.xz -C /subspace/void
+    rm -rf /tempo
     cp /etc/resolv.conf /subspace/void/etc/resolv.conf
-
-    if [ ! -d "/subspace/void/usr" ]; then
-        echo "ERROR: Void subspace installation failed"
-        exit 1
-    fi
-
-    step "Creating launcher script"
     cat > /usr/local/bin/subspace-void <<'VOID'
 #!/bin/bash
 xhost +local: > /dev/null 2>&1
-
-# not when the installer creates it.
 if [ -n "\$DISPLAY" ]; then
-    sudo systemd-nspawn -q -D /subspace/void \
-        --bind-ro=/etc/resolv.conf \
-        --bind-ro=/tmp/.X11-unix \
-        --bind=/dev/dri \
-        --setenv=DISPLAY=\$DISPLAY \
-        /bin/sh
+    sudo systemd-nspawn -q -D /subspace/void --bind-ro=/etc/resolv.conf --bind-ro=/tmp/.X11-unix --bind=/dev/dri --setenv=DISPLAY=\$DISPLAY /bin/sh
 else
     sudo systemd-nspawn -q -D /subspace/void /bin/sh
 fi
 VOID
-
-
     chmod +x /usr/local/bin/subspace-void
-
-    echo "alias void='/usr/local/bin/subspace-void'" >> "/home/$username/.bashrc"
-
-    echo "  > Void subspace installed"
+    echo "alias void='/usr/local/bin/subspace-void'" >> /home/$username/.bashrc
 fi
 
 if [[ "$INSTALL_FEDORA" == "true" ]]; then
-    header "Installing Fedora Subspace"
-
-    step "Installing dependencies"
     pacman -S --noconfirm tar curl xorg-xhost xz
-
-    step "Bootstrapping Fedora"
-    mkdir -p /subspace/fedora
-    mkdir -p /tempo/fedora-workspace
-
-    # Download (Using Fedora 44 OCI as requested)
+    mkdir -p /subspace/fedora /tempo/fedora-workspace
     curl -L "https://download.fedoraproject.org/pub/fedora/linux/releases/44/Container/x86_64/images/Fedora-Container-Base-Generic-44-1.7.x86_64.oci.tar.xz" \
          -o /tempo/fedora-workspace/fedora.tar.xz
-
-    # 1. Unpack the OCI container structure first
-    tar -xf "/tempo/fedora-workspace/fedora.tar.xz" -C /subspace/fedora
-
-    # 2. Extract the actual RootFS blob (the largest file)
+    tar -xf /tempo/fedora-workspace/fedora.tar.xz -C /subspace/fedora
     tar -xpf "/subspace/fedora/blobs/sha256/d93cacdefe7f7526297a08879cb444d1eeb526adf9cb7e34ab1f0609759a3044" -C /subspace/fedora --numeric-owner
-
-    # 3. Clean up the OCI metadata and the tempo folder
-    rm -rf /subspace/fedora/blobs /subspace/fedora/index.json /subspace/fedora/oci-layout
-    rm -rf "/tempo"
-
-    # CRITICAL: Fix DNS so 'dnf' works inside the subspace
+    rm -rf /subspace/fedora/blobs /subspace/fedora/index.json /subspace/fedora/oci-layout /tempo
     cp /etc/resolv.conf /subspace/fedora/etc/resolv.conf
-
-    if [ ! -d "/subspace/fedora/usr" ]; then
-        echo "ERROR: Fedora subspace installation failed (No OS tree found)"
-        exit 1
-    fi
-
-    step "Creating launcher script"
     cat > /usr/local/bin/subspace-fedora <<'FEDORA'
 #!/bin/bash
 xhost +local: > /dev/null 2>&1
-
 if [ -n "\$DISPLAY" ]; then
-    sudo systemd-nspawn -q -D /subspace/fedora \
-        --bind-ro=/etc/resolv.conf \
-        --bind-ro=/tmp/.X11-unix \
-        --bind=/dev/dri \
-        --setenv=DISPLAY=\$DISPLAY \
-        /usr/bin/bash
+    sudo systemd-nspawn -q -D /subspace/fedora --bind-ro=/etc/resolv.conf --bind-ro=/tmp/.X11-unix --bind=/dev/dri --setenv=DISPLAY=\$DISPLAY /usr/bin/bash
 else
     sudo systemd-nspawn -q -D /subspace/fedora /usr/bin/bash
 fi
 FEDORA
-
     chmod +x /usr/local/bin/subspace-fedora
-    echo "alias fedora='/usr/local/bin/subspace-fedora'" >> "/home/$username/.bashrc"
-
-    echo "  > Fedora subspace installed"
+    echo "alias fedora='/usr/local/bin/subspace-fedora'" >> /home/$username/.bashrc
 fi
 
 if [[ "$INSTALL_OPENSUSE" == "true" ]]; then
-    header "Installing Opensuse Subspace"
-
-    step "Installing dependencies"
     pacman -S --noconfirm tar curl xorg-xhost
-
-    step "Bootstrapping Void"
-    # Create the subspace and the dedicated workspace
-    mkdir -p /subspace/opensuse
-    mkdir -p /tempo/opensuse-workspace
-
-    # Download: Save it with a specific filename inside your tempo path
+    mkdir -p /subspace/opensuse /tempo/opensuse-workspace
     curl -L "http://download.opensuse.org/tumbleweed/appliances/opensuse-tumbleweed-image.x86_64-networkd.tar.xz" \
          -o /tempo/opensuse-workspace/opensuse.tar.xz
-
-    # Extract: Point to that specific filename
-    tar -xf "/tempo/void-workspace/opensuse.tar.xz" -C /subspace/opensuse
-
-    # Clean up: Remove the workspace directory and everything inside it
-    rm -rf "/tempo"
-
-    # CRITICAL: Fix DNS so 'zypper' works inside the subspace
+    tar -xf /tempo/opensuse-workspace/opensuse.tar.xz -C /subspace/opensuse
+    rm -rf /tempo
     cp /etc/resolv.conf /subspace/opensuse/etc/resolv.conf
-
-    if [ ! -d "/subspace/opensuse/usr" ]; then
-        echo "ERROR: Void subspace installation failed"
-        exit 1
-    fi
-
-    step "Creating launcher script"
     cat > /usr/local/bin/subspace-opensuse <<'OPENSUSE'
 #!/bin/bash
 xhost +local: > /dev/null 2>&1
-
-# not when the installer creates it.
 if [ -n "\$DISPLAY" ]; then
-    sudo systemd-nspawn -q -D /subspace/opensuse \
-        --bind-ro=/etc/resolv.conf \
-        --bind-ro=/tmp/.X11-unix \
-        --bind=/dev/dri \
-        --setenv=DISPLAY=\$DISPLAY \
-        /bin/sh
+    sudo systemd-nspawn -q -D /subspace/opensuse --bind-ro=/etc/resolv.conf --bind-ro=/tmp/.X11-unix --bind=/dev/dri --setenv=DISPLAY=\$DISPLAY /bin/sh
 else
     sudo systemd-nspawn -q -D /subspace/opensuse /bin/sh
 fi
 OPENSUSE
+    chmod +x /usr/local/bin/subspace-opensuse
+    echo "alias opensuse='/usr/local/bin/subspace-opensuse'" >> /home/$username/.bashrc
+fi
 
-
-
-
-
-if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" && "$INSTALL_GENTOO" == "false" && "$INSTALL_VOID" == "false" && "$INSTALL_FEDORA" == "false" && "$INSTALL_OPENSUSE" == "false" ]]; then
+if [[ "$INSTALL_DEBIAN" == "false" && "$INSTALL_ALPINE" == "false" && "$INSTALL_GENTOO" == "false" && \
+      "$INSTALL_VOID" == "false" && "$INSTALL_FEDORA" == "false" && "$INSTALL_OPENSUSE" == "false" ]]; then
     echo "  > no subspaces selected"
 fi
 
 clear
-
-echo --------------------------
+echo "--------------------------"
 figlet Snapshots
-echo --------------------------
-
+echo "--------------------------"
 
 pacman -S --noconfirm snapper snap-pac grub-btrfs
-
-# create snapper config for root (/.snapshots is already mounted)
 snapper -c root create-config / 2>&1 || echo "WARNING: snapper create-config failed, will retry on first boot"
-
 systemctl enable snapper-timeline.timer
 systemctl enable snapper-cleanup.timer
 
+if ! grep -q "snapshot()" /home/$username/.bashrc 2>/dev/null; then
+    cat >> /home/$username/.bashrc << 'SNAPPA'
 
-# bash helper
-if ! grep -q "snapshot()" ~/.bashrc; then
-    cat >> ~/.bashrc << 'SNAPPA'
-
-# Snapper helper
 snapshot() {
-    if [ -z "$1" ]; then
-        echo "Usage: snapshot <description>"
-        return 1
-    fi
-    sudo snapper -c root create --description "$*"
+    if [ -z "\$1" ]; then echo "Usage: snapshot <description>"; return 1; fi
+    sudo snapper -c root create --description "\$*"
 }
 SNAPPA
 fi
 
-
-# pacman + GRUB hook
 mkdir -p /etc/pacman.d/hooks
-
 cat > /etc/pacman.d/hooks/95-snapper-grub.hook << 'REGEN'
 [Trigger]
 Operation = Install
@@ -1863,38 +1751,12 @@ Description = Regenerating GRUB configuration...
 When = PostTransaction
 Exec = /usr/bin/grub-mkconfig -o /boot/grub/grub.cfg
 REGEN
-
 chmod 644 /etc/pacman.d/hooks/95-snapper-grub.hook
 
 clear
-
-echo "--------------------------"
-figlet More Kernel stuff
-echo "--------------------------"
-
-
-cat > /etc/zerene-tune.txt <<TUNE
-zerene auto tuning - applied at install 
-
-cpu:        $CPU_MODEL_NAME
-cores:      $CPU_CORES
-ram:        ${RAM_MB}mb
-disk:       $DISK_TYPE
-laptop:     $IS_LAPTOP
-vm:         $IS_VM
-kernel:     $KERNEL_PKG
-headers:    $KERNEL_HEADERS
-auto-tune:  $AUTO_TUNE
-auto-config: $AUTO_CONFIG
-TUNE
-
-clear
-
 echo "--------------------------"
 figlet Bootloader
 echo "--------------------------"
-
-                                                     
 
 if [[ "$BOOT_MODE" == "uefi" ]]; then
     pacman -S --noconfirm grub efibootmgr
@@ -1905,20 +1767,30 @@ else
 fi
 
 systemctl enable grub-btrfsd
-
 grub-mkconfig -o /boot/grub/grub.cfg
 
-clear
+cat > /etc/zerene-tune.txt <<TUNE
+zerene auto tuning - applied at install
 
+cpu:        $CPU_MODEL_NAME
+cores:      $CPU_CORES
+ram:        ${RAM_MB}mb
+disk:       $DISK_TYPE
+laptop:     $IS_LAPTOP
+vm:         $IS_VM
+kernel:     $KERNEL_PKG
+timezone:   $TIMEZONE
+mirrors:    ${MIRROR_COUNTRY:-default}
+TUNE
+
+clear
 echo "--------------------------"
 figlet Finalizing
 echo "--------------------------"
 
-echo "one last check mate..."
-
-plymouth-set-default-theme -R zerene-spinner
+plymouth-set-default-theme -R zerene-spinner 2>/dev/null || true
 mkinitcpio -P
-sudo pacman -R --noconfirm figlet
+pacman -R --noconfirm figlet 2>/dev/null || true
 EOF
 
 step "Unmounting"
@@ -1926,7 +1798,7 @@ umount -R /mnt 2>/dev/null || true
 ok "done"
 
 # --------------------------------------------------------
-# finish screen
+# finish
 # --------------------------------------------------------
 echo
 echo "--------------------------"
@@ -1938,9 +1810,11 @@ echo
 echo -e "${BLUE}${BOLD}    Zerene OS installed successfully  ·  VER : XENOVIA 2"
 echo
 echo -e "${GRAY}    filesystem: $FS_TYPE  ·  boot: $BOOT_MODE${RESET}"
-echo -e "${GRAY}    disk option: $([ "$FORMAT_DISK" == "true" ] && echo "format entire disk" || echo "split ${SPLIT_PERCENT}%")${RESET}"
+echo -e "${GRAY}    timezone:   $TIMEZONE${RESET}"
+echo -e "${GRAY}    mirrors:    ${MIRROR_COUNTRY:-default}${RESET}"
+echo -e "${GRAY}    disk:       $([ "$FORMAT_DISK" == "true" ] && echo "full format" || echo "split ${ZERENE_SIZE_GB}GB Zerene / ${OTHER_SIZE_GB}GB existing")${RESET}"
 echo -e "${GRAY}    tuning report  →  /etc/zerene-tune.txt${RESET}"
 echo -e "${GRAY}    you can now reboot${RESET}"
-echo "If you do not see any snapshots or cannot create any, please run "snapper -c root create-config /" in your system."
+echo "If you do not see any snapshots or cannot create any, run: snapper -c root create-config /"
 rule
 echo
